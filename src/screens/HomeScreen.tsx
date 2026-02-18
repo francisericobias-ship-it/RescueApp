@@ -18,19 +18,68 @@ import { useFocusEffect } from '@react-navigation/native';
 import Geolocation from '@react-native-community/geolocation';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import {
-  saveHistoryEvent,
-  getHistoryEvents,
-  HistoryEvent,
-} from '../services/historyStorage';
-
 import { requestLocationPermission } from '../utils/LocationPermissions';
 
+// Types for history events
+export type HistoryEvent = {
+  id: string;
+  type: 'accident' | 'SOS' | 'DrivingMode' | 'Crash';
+  description: string;
+  timestamp: number;
+  latitude?: number;
+  longitude?: number;
+};
+
+// Storage key
+const STORAGE_KEY = '@history';
+
+// Fetch stored history
+const getHistoryEvents = async (): Promise<HistoryEvent[]> => {
+  try {
+    const stored = await AsyncStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch (error) {
+    console.log('Error fetching history:', error);
+    return [];
+  }
+};
+
+// Save a new event to history
+const saveHistoryEvent = async (event: HistoryEvent) => {
+  try {
+    const existing = await AsyncStorage.getItem(STORAGE_KEY);
+    const data: HistoryEvent[] = existing ? JSON.parse(existing) : [];
+    data.unshift(event); // add new event to the top
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (error) {
+    console.log('Error saving history:', error);
+  }
+};
+
+// Constants
 const SPEED_THRESHOLD = 20; // km/h for auto-mode
-const AUTO_OFF_DELAY = 10000; // ms
+const AUTO_OFF_DELAY = 10000; // ms delay to turn off driving mode
+
+// Your Google Maps Geocoding API Key
+const GOOGLE_MAPS_API_KEY = 'YOUR_GOOGLE_MAPS_API_KEY'; // Replace with your key
+
+// Function to fetch location name via Google Geocoding API
+const fetchLocationName = async (lat: number, lng: number): Promise<string> => {
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`;
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    if (data.status === 'OK' && data.results.length > 0) {
+      return data.results[0].formatted_address;
+    }
+  } catch (error) {
+    console.log('Geocoding error:', error);
+  }
+  return 'Unknown location';
+};
 
 export default function HomeScreen({ navigation }) {
-  // State management
+  // State variables
   const [drivingMode, setDrivingMode] = useState(false);
   const [speed, setSpeed] = useState(0);
   const [crashSensitivity, setCrashSensitivity] = useState('medium');
@@ -39,17 +88,19 @@ export default function HomeScreen({ navigation }) {
   // SOS modal states
   const [modalVisible, setModalVisible] = useState(false);
   const [sending, setSending] = useState(false);
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
+  const [title, setTitle] = useState('Emergency SOS');
+  const [description, setDescription] = useState('Help needed at my location.');
   const [locationText, setLocationText] = useState('');
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
+  const [locationName, setLocationName] = useState<string>('');
 
+  // Animations and timers
   const sosScale = useRef(new Animated.Value(1)).current;
   const autoOffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchId = useRef<number | null>(null);
 
-  // Load settings & history on focus
+  // Load settings and history on focus
   useFocusEffect(
     useCallback(() => {
       const loadData = async () => {
@@ -64,7 +115,7 @@ export default function HomeScreen({ navigation }) {
     }, [])
   );
 
-  // Watch GPS speed
+  // GPS speed monitoring
   useEffect(() => {
     const startWatching = async () => {
       const granted = await requestLocationPermission();
@@ -100,7 +151,7 @@ export default function HomeScreen({ navigation }) {
     };
   }, []);
 
-  // Auto driving mode toggle
+  // Auto toggle driving mode based on speed
   useEffect(() => {
     if (speed >= SPEED_THRESHOLD && !drivingMode) {
       setDrivingMode(true);
@@ -121,41 +172,51 @@ export default function HomeScreen({ navigation }) {
     };
   }, [speed, drivingMode]);
 
-  // Get current location
-  const getLocation = async () => {
+  // Function to get current location
+  const getLocation = async (): Promise<{ lat: number; lng: number } | null> => {
     const granted = await requestLocationPermission();
     if (!granted) {
       Alert.alert('Permission required', 'Enable location permission.');
-      return;
+      return null;
     }
 
-    Geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude, longitude } = pos.coords;
-        setLatitude(latitude);
-        setLongitude(longitude);
-        setLocationText(`Lat: ${latitude.toFixed(6)}, Lng: ${longitude.toFixed(6)}`);
-      },
-      (err) => Alert.alert('Location Error', err.message),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
-    );
+    return new Promise((resolve) => {
+      Geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude } = pos.coords;
+          setLatitude(latitude);
+          setLongitude(longitude);
+          setLocationText(`Lat: ${latitude.toFixed(6)}, Lng: ${longitude.toFixed(6)}`);
+          resolve({ lat: latitude, lng: longitude });
+        },
+        (err) => {
+          Alert.alert('Location Error', err.message);
+          resolve(null);
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      );
+    });
   };
 
-  // Submit manual SOS
-  const submitSOS = async () => {
-    if (!title || !description || latitude === null || longitude === null) {
-      Alert.alert('Missing fields', 'Please complete all required fields.');
-      return;
-    }
-
+  // Handle manual SOS with dynamic title & description
+  const handleManualSOS = async (titleInput, descriptionInput) => {
     setSending(true);
     try {
       const token = await AsyncStorage.getItem('token');
       if (!token) {
-        Alert.alert('Error', 'You are not logged in');
+        Alert.alert('Error', 'You are not logged in.');
         setSending(false);
         return;
       }
+
+      const coords = await getLocation();
+      if (!coords) {
+        setSending(false);
+        return;
+      }
+
+      const name = await fetchLocationName(coords.lat, coords.lng);
+      setLocationName(name);
 
       const response = await fetch(
         'https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts',
@@ -166,18 +227,17 @@ export default function HomeScreen({ navigation }) {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            alert_type: 'emergency',
+            alert_type: 'accident',
             severity: 'high',
-            title,
-            description,
-            location: locationText,
-            latitude,
-            longitude,
-            image_url: '',
+            title: titleInput,
+            description: descriptionInput,
+            location: name,
+            latitude: coords.lat,
+            longitude: coords.lng,
+            image_url: 'string',
           }),
         }
       );
-
       const data = await response.json();
 
       if (!response.ok) {
@@ -188,25 +248,19 @@ export default function HomeScreen({ navigation }) {
 
       Alert.alert('SOS Sent', 'Emergency alert submitted successfully 🚑');
 
-      // Save to history
+      // Save event to history
       const newEvent: HistoryEvent = {
         id: Date.now().toString(),
-        type: 'SOS',
+        type: 'accident',
         timestamp: Date.now(),
-        latitude,
-        longitude,
-        description,
+        latitude: coords.lat,
+        longitude: coords.lng,
+        description: descriptionInput,
       };
       await saveHistoryEvent(newEvent);
-      const updated = await getHistoryEvents();
-      setHistory(updated);
+      const updatedHistory = await getHistoryEvents();
+      setHistory(updatedHistory);
 
-      // Reset form
-      setTitle('');
-      setDescription('');
-      setLocationText('');
-      setLatitude(null);
-      setLongitude(null);
       setModalVisible(false);
     } catch (err) {
       console.error(err);
@@ -216,7 +270,6 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
-  // Render UI
   return (
     <ScrollView style={styles.container}>
       {/* Header */}
@@ -250,7 +303,7 @@ export default function HomeScreen({ navigation }) {
         </Pressable>
       </Animated.View>
 
-      {/* Crash Detection Navigation */}
+      {/* Navigation to Crash Detection */}
       <Button
         title="Open Crash Detection"
         color="#e74c3c"
@@ -267,8 +320,8 @@ export default function HomeScreen({ navigation }) {
       <Modal visible={modalVisible} animationType="slide">
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Manual SOS Request</Text>
-          
-          {/* Input Fields */}
+
+          {/* Input fields for dynamic title & description */}
           <TextInput
             style={styles.input}
             placeholder="Title *"
@@ -282,6 +335,8 @@ export default function HomeScreen({ navigation }) {
             value={description}
             onChangeText={setDescription}
           />
+
+          {/* Location input */}
           <TextInput
             style={styles.input}
             placeholder="Location"
@@ -289,28 +344,31 @@ export default function HomeScreen({ navigation }) {
             onChangeText={setLocationText}
           />
 
-          {/* Use My Location Button */}
+          {/* Button to use current location */}
           <TouchableOpacity style={styles.locationBtn} onPress={getLocation}>
             <Text style={{ color: '#fff' }}>Use My Location</Text>
           </TouchableOpacity>
 
-          {/* Show Coordinates */}
+          {/* Show coordinates & location name */}
           {latitude !== null && longitude !== null && (
             <Text style={styles.coords}>
-              Lat: {latitude.toFixed(6)} | Lng: {longitude.toFixed(6)}
+              Lat: {latitude.toFixed(6)} | Lng: {longitude.toFixed(6)} | {locationName}
             </Text>
           )}
 
-          {/* Submit Button / Loader */}
+          {/* Submit button / loader */}
           {sending ? (
             <ActivityIndicator size="large" color="red" />
           ) : (
-            <TouchableOpacity style={styles.submitBtn} onPress={submitSOS}>
+            <TouchableOpacity
+              style={styles.submitBtn}
+              onPress={() => handleManualSOS(title, description)}
+            >
               <Text style={styles.submitText}>SUBMIT SOS</Text>
             </TouchableOpacity>
           )}
 
-          {/* Cancel Button */}
+          {/* Cancel button */}
           <TouchableOpacity
             style={styles.cancelBtn}
             onPress={() => setModalVisible(false)}
@@ -323,7 +381,7 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
-// Styles (unchanged, but keep as is or customize further)
+// Styles
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: '#f9fafb' },
   header: {
@@ -374,8 +432,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginTop: 20,
   },
-
-  /* MODAL */
   modalContainer: {
     flex: 1,
     padding: 20,
@@ -409,6 +465,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 12,
     alignItems: 'center',
+    marginBottom: 10,
   },
   submitText: {
     color: '#fff',

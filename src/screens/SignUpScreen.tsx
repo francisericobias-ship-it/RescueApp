@@ -10,6 +10,7 @@ import {
 import axios from 'axios';
 
 export default function SignUpScreen({ navigation }) {
+  // State variables for form fields
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [middleName, setMiddleName] = useState('');
@@ -21,18 +22,12 @@ export default function SignUpScreen({ navigation }) {
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Handler for sign-up button
   const handleSignUp = async () => {
     // Basic validation
     if (
-      !firstName ||
-      !lastName ||
-      !middleName ||
-      !extName ||
-      !userPhoneNumber ||
-      !email ||
-      !username ||
-      !password ||
-      !passwordConfirmation
+      !firstName || !lastName || !middleName || !extName ||
+      !userPhoneNumber || !email || !username || !password || !passwordConfirmation
     ) {
       Alert.alert('Error', 'Please fill all fields');
       return;
@@ -44,7 +39,6 @@ export default function SignUpScreen({ navigation }) {
     }
 
     setLoading(true);
-
     try {
       const response = await axios.post(
         'https://rescuelink-backend-j0gz.onrender.com/api/v1/auth/register',
@@ -58,7 +52,7 @@ export default function SignUpScreen({ navigation }) {
           password,
           password_confirmation: passwordConfirmation,
           user_phone_number: userPhoneNumber,
-          role: 'admin', // or make this configurable
+          role: 'admin', // Adjust role as needed
         },
         {
           headers: { 'Content-Type': 'application/json' },
@@ -91,6 +85,7 @@ export default function SignUpScreen({ navigation }) {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Create an Account</Text>
 
+      {/* Input Fields */}
       <TextInput
         style={styles.input}
         placeholder="First Name"
@@ -152,6 +147,7 @@ export default function SignUpScreen({ navigation }) {
         onChangeText={setPasswordConfirmation}
       />
 
+      {/* Sign Up Button */}
       <TouchableOpacity
         style={[styles.signupButton, loading && styles.disabledButton]}
         onPress={handleSignUp}

@@ -13,14 +13,16 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
+
 import { useFocusEffect } from '@react-navigation/native';
 import Geolocation from '@react-native-community/geolocation';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import PushNotification from 'react-native-push-notification';
 import { requestLocationPermission } from '../utils/LocationPermissions';
 
-// Types for history events
 export type HistoryEvent = {
   id: string;
   type: 'accident' | 'SOS' | 'DrivingMode' | 'Crash';
@@ -30,10 +32,8 @@ export type HistoryEvent = {
   longitude?: number;
 };
 
-// Storage key
 const STORAGE_KEY = '@history';
 
-// Fetch stored history
 const getHistoryEvents = async (): Promise<HistoryEvent[]> => {
   try {
     const stored = await AsyncStorage.getItem(STORAGE_KEY);
@@ -44,26 +44,21 @@ const getHistoryEvents = async (): Promise<HistoryEvent[]> => {
   }
 };
 
-// Save a new event to history
 const saveHistoryEvent = async (event: HistoryEvent) => {
   try {
     const existing = await AsyncStorage.getItem(STORAGE_KEY);
     const data: HistoryEvent[] = existing ? JSON.parse(existing) : [];
-    data.unshift(event); // add new event to the top
+    data.unshift(event);
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch (error) {
     console.log('Error saving history:', error);
   }
 };
 
-// Constants
-const SPEED_THRESHOLD = 20; // km/h for auto-mode
-const AUTO_OFF_DELAY = 10000; // ms delay to turn off driving mode
+const SPEED_THRESHOLD = 20; // km/h
+const AUTO_OFF_DELAY = 10000; // ms
+const GOOGLE_MAPS_API_KEY = 'YOUR_API_KEY'; // Palitan ng iyong API key
 
-// Your Google Maps Geocoding API Key
-const GOOGLE_MAPS_API_KEY = 'YOUR_GOOGLE_MAPS_API_KEY'; // Replace with your key
-
-// Function to fetch location name via Google Geocoding API
 const fetchLocationName = async (lat: number, lng: number): Promise<string> => {
   const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`;
   try {
@@ -78,6 +73,26 @@ const fetchLocationName = async (lat: number, lng: number): Promise<string> => {
   return 'Unknown location';
 };
 
+const setupPushNotifications = () => {
+  PushNotification.configure({
+    onNotification: function (notification) {
+      console.log('NOTIFICATION:', notification);
+    },
+    requestPermissions: Platform.OS === 'ios',
+  });
+
+  if (Platform.OS === 'android') {
+    PushNotification.createChannel(
+      {
+        channelId: 'rescue-link-channel',
+        channelName: 'Rescue Link Notifications',
+        importance: 4,
+      },
+      (created) => console.log(`createChannel returned '${created}'`)
+    );
+  }
+};
+
 export default function HomeScreen({ navigation }) {
   // State variables
   const [drivingMode, setDrivingMode] = useState(false);
@@ -85,7 +100,6 @@ export default function HomeScreen({ navigation }) {
   const [crashSensitivity, setCrashSensitivity] = useState('medium');
   const [history, setHistory] = useState<HistoryEvent[]>([]);
 
-  // SOS modal states
   const [modalVisible, setModalVisible] = useState(false);
   const [sending, setSending] = useState(false);
   const [title, setTitle] = useState('Emergency SOS');
@@ -93,25 +107,25 @@ export default function HomeScreen({ navigation }) {
   const [locationText, setLocationText] = useState('');
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
-  const [locationName, setLocationName] = useState<string>('');
+  const [locationName, setLocationName] = useState('');
 
-  // Animations and timers
   const sosScale = useRef(new Animated.Value(1)).current;
   const autoOffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchId = useRef<number | null>(null);
 
-  // Load settings and history on focus
+  // Initialize notifications and load data on focus
   useFocusEffect(
     useCallback(() => {
       const loadData = async () => {
         const val = await AsyncStorage.getItem('@settings_crash_sensitivity');
-        if (val === 'low' || val === 'medium' || val === 'high') {
+        if (['low', 'medium', 'high'].includes(val || '')) {
           setCrashSensitivity(val);
         }
         const events = await getHistoryEvents();
         setHistory(events);
       };
       loadData();
+      setupPushNotifications();
     }, [])
   );
 
@@ -120,7 +134,6 @@ export default function HomeScreen({ navigation }) {
     const startWatching = async () => {
       const granted = await requestLocationPermission();
       if (!granted) return;
-
       watchId.current = Geolocation.watchPosition(
         (pos) => {
           const gpsSpeed = pos.coords.speed;
@@ -140,7 +153,6 @@ export default function HomeScreen({ navigation }) {
         }
       );
     };
-
     startWatching();
 
     return () => {
@@ -155,15 +167,15 @@ export default function HomeScreen({ navigation }) {
   useEffect(() => {
     if (speed >= SPEED_THRESHOLD && !drivingMode) {
       setDrivingMode(true);
+      showNotification('Driving Mode', 'Activated', speed);
     }
-
     if (speed < SPEED_THRESHOLD && drivingMode && !autoOffTimer.current) {
       autoOffTimer.current = setTimeout(() => {
         setDrivingMode(false);
+        showNotification('Driving Mode', 'Deactivated');
         autoOffTimer.current = null;
       }, AUTO_OFF_DELAY);
     }
-
     return () => {
       if (autoOffTimer.current) {
         clearTimeout(autoOffTimer.current);
@@ -172,15 +184,13 @@ export default function HomeScreen({ navigation }) {
     };
   }, [speed, drivingMode]);
 
-  // Function to get current location
-  const getLocation = async (): Promise<{ lat: number; lng: number } | null> => {
+  const getLocation = async () => {
     const granted = await requestLocationPermission();
     if (!granted) {
       Alert.alert('Permission required', 'Enable location permission.');
       return null;
     }
-
-    return new Promise((resolve) => {
+    return new Promise<{ lat: number; lng: number } | null>((resolve) => {
       Geolocation.getCurrentPosition(
         (pos) => {
           const { latitude, longitude } = pos.coords;
@@ -198,7 +208,6 @@ export default function HomeScreen({ navigation }) {
     });
   };
 
-  // Handle manual SOS with dynamic title & description
   const handleManualSOS = async (titleInput, descriptionInput) => {
     setSending(true);
     try {
@@ -218,37 +227,27 @@ export default function HomeScreen({ navigation }) {
       const name = await fetchLocationName(coords.lat, coords.lng);
       setLocationName(name);
 
-      const response = await fetch(
-        'https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            alert_type: 'accident',
-            severity: 'high',
-            title: titleInput,
-            description: descriptionInput,
-            location: name,
-            latitude: coords.lat,
-            longitude: coords.lng,
-            image_url: 'string',
-          }),
-        }
-      );
-      const data = await response.json();
-
-      if (!response.ok) {
-        Alert.alert('Error', data.message || 'Failed to send alert');
-        setSending(false);
-        return;
-      }
+      // Send alert to backend
+      await fetch('https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // 'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          alert_type: 'accident',
+          severity: 'high',
+          title: titleInput,
+          description: descriptionInput,
+          location: name,
+          latitude: coords.lat,
+          longitude: coords.lng,
+          image_url: 'string',
+        }),
+      });
 
       Alert.alert('SOS Sent', 'Emergency alert submitted successfully 🚑');
 
-      // Save event to history
       const newEvent: HistoryEvent = {
         id: Date.now().toString(),
         type: 'accident',
@@ -260,7 +259,6 @@ export default function HomeScreen({ navigation }) {
       await saveHistoryEvent(newEvent);
       const updatedHistory = await getHistoryEvents();
       setHistory(updatedHistory);
-
       setModalVisible(false);
     } catch (err) {
       console.error(err);
@@ -270,9 +268,18 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
+  // Updated showNotification to include speed when activating driving mode
+  const showNotification = (title, message, speed?) => {
+    const finalMsg = speed ? `${message} at ${speed} km/h` : message;
+    PushNotification.localNotification({
+      channelId: 'rescue-link-channel',
+      title,
+      message: finalMsg,
+    });
+  };
+
   return (
     <ScrollView style={styles.container}>
-      {/* Header */}
       <Text style={styles.header}>RescueLink</Text>
 
       {/* Speed & Crash Sensitivity */}
@@ -285,7 +292,7 @@ export default function HomeScreen({ navigation }) {
         <Text style={styles.sensitivity}>{crashSensitivity.toUpperCase()}</Text>
       </View>
 
-      {/* SOS Button */}
+      {/* SOS Button with animation */}
       <Animated.View style={{ transform: [{ scale: sosScale }] }}>
         <Pressable
           style={styles.sosButton}
@@ -303,6 +310,16 @@ export default function HomeScreen({ navigation }) {
         </Pressable>
       </Animated.View>
 
+      {/* *** Tinatanggal na ang button na ito *** */}
+      {/*
+      <TouchableOpacity
+        style={styles.notificationButton}
+        onPress={() => showNotification('Test Notification', 'This is a test notification!')}
+      >
+        <Text style={styles.notificationButtonText}>Send Notification</Text>
+      </TouchableOpacity>
+      */}
+
       {/* Navigation to Crash Detection */}
       <Button
         title="Open Crash Detection"
@@ -313,15 +330,19 @@ export default function HomeScreen({ navigation }) {
       {/* Driving Mode Toggle */}
       <View style={styles.toggle}>
         <Text>Driving Mode</Text>
-        <Switch value={drivingMode} onValueChange={setDrivingMode} />
+        <Switch
+          value={drivingMode}
+          onValueChange={(value) => {
+            setDrivingMode(value);
+            showNotification('Driving Mode', value ? 'Activated' : 'Deactivated', speed);
+          }}
+        />
       </View>
 
       {/* Manual SOS Modal */}
       <Modal visible={modalVisible} animationType="slide">
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Manual SOS Request</Text>
-
-          {/* Input fields for dynamic title & description */}
           <TextInput
             style={styles.input}
             placeholder="Title *"
@@ -336,7 +357,6 @@ export default function HomeScreen({ navigation }) {
             onChangeText={setDescription}
           />
 
-          {/* Location input */}
           <TextInput
             style={styles.input}
             placeholder="Location"
@@ -344,19 +364,16 @@ export default function HomeScreen({ navigation }) {
             onChangeText={setLocationText}
           />
 
-          {/* Button to use current location */}
           <TouchableOpacity style={styles.locationBtn} onPress={getLocation}>
             <Text style={{ color: '#fff' }}>Use My Location</Text>
           </TouchableOpacity>
 
-          {/* Show coordinates & location name */}
           {latitude !== null && longitude !== null && (
             <Text style={styles.coords}>
               Lat: {latitude.toFixed(6)} | Lng: {longitude.toFixed(6)} | {locationName}
             </Text>
           )}
 
-          {/* Submit button / loader */}
           {sending ? (
             <ActivityIndicator size="large" color="red" />
           ) : (
@@ -368,7 +385,6 @@ export default function HomeScreen({ navigation }) {
             </TouchableOpacity>
           )}
 
-          {/* Cancel button */}
           <TouchableOpacity
             style={styles.cancelBtn}
             onPress={() => setModalVisible(false)}
@@ -381,7 +397,6 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
-// Styles
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: '#f9fafb' },
   header: {
@@ -431,6 +446,18 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 16,
     marginTop: 20,
+  },
+  notificationButton: {
+    marginTop: 20,
+    backgroundColor: '#007bff',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  notificationButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   modalContainer: {
     flex: 1,

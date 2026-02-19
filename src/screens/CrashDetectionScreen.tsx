@@ -9,7 +9,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // <-- Added import
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Geolocation from '@react-native-community/geolocation'; // or 'react-native-geolocation-service'
 
 type CrashSensitivity = 'low' | 'medium' | 'high';
 
@@ -91,32 +92,62 @@ export default function CrashDetectionScreen({ navigation, route }: Props) {
       !cancelled &&
       impactForce >= CRASH_THRESHOLDS[sensitivity]
     ) {
-      sendCrashToServer();
+      handleCrashDetected();
     }
   }, [impactForce, countdown, cancelled, sensitivity]);
 
-  // Send crash info to backend
-  const sendCrashToServer = async () => {
+  // Fetch location and send crash report
+  const handleCrashDetected = async () => {
     setIsSending(true);
     try {
-      await fetch('http://192.168.110.212:3000/crash', {
+      const location = await getCurrentLocation();
+
+      // Prepare crash data
+      const crashData = {
+        type: 'CRASH',
+        description: `Crash detected (${impactForce.toFixed(2)}G | ${sensitivity})`,
+        impact_force: impactForce,
+        sensitivity,
+        latitude: location?.latitude,
+        longitude: location?.longitude,
+      };
+
+      // Send to backend API
+      const response = await fetch('https://your-api-endpoint.com/crash-alerts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'CRASH',
-          description: `Crash detected (${impactForce.toFixed(2)}G | ${sensitivity})`,
-          impact_force: impactForce,
-          sensitivity,
-        }),
+        body: JSON.stringify(crashData),
       });
-      Alert.alert('🚨 Emergency Alert', 'Crash detected. SOS sent!', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
-    } catch (err) {
-      Alert.alert('Error', 'Failed to send crash data.');
+
+      if (response.ok) {
+        Alert.alert('🚨 Emergency Alert', 'Crash detected. SOS sent!', [
+          { text: 'OK', onPress: () => navigation.goBack() },
+        ]);
+      } else {
+        throw new Error('Failed to send crash alert');
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Error', 'Unable to send crash alert or get location.');
     } finally {
       setIsSending(false);
     }
+  };
+
+  const getCurrentLocation = () => {
+    return new Promise<{ latitude: number; longitude: number } | null>((resolve, reject) => {
+      Geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          resolve({ latitude, longitude });
+        },
+        (error) => {
+          console.log('Geolocation error:', error);
+          resolve(null);
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      );
+    });
   };
 
   const handleCancel = () => {
@@ -124,14 +155,11 @@ export default function CrashDetectionScreen({ navigation, route }: Props) {
   };
 
   if (cancelled) {
-    // UI after cancelling alert
     return (
       <View style={styles.cancelledContainer}>
         <Icon name="x-circle" size={96} color="#E53E3E" />
         <Text style={styles.cancelledTitle}>Alert Cancelled</Text>
-        <Text style={styles.cancelledDesc}>
-          The emergency alert has been cancelled.
-        </Text>
+        <Text style={styles.cancelledDesc}>The emergency alert has been cancelled.</Text>
         <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
           <Text style={styles.backButtonText}>Back to Home</Text>
         </Pressable>
@@ -139,7 +167,6 @@ export default function CrashDetectionScreen({ navigation, route }: Props) {
     );
   }
 
-  // Main UI
   return (
     <View style={styles.container}>
       {/* Impact Icon */}

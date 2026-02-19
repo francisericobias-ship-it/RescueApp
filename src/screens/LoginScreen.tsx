@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
@@ -21,13 +22,27 @@ type LoginScreenNavigationProp = NativeStackNavigationProp<
 
 interface Props {
   navigation: LoginScreenNavigationProp;
-  onLogin?: () => void; // optional callback to notify parent app of login
+  onLogin?: () => void; // callback to notify parent of login
 }
 
 export default function LoginScreen({ navigation, onLogin }: Props) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Optional: Check token in storage to auto-login
+  useEffect(() => {
+    const checkToken = async () => {
+      const token = await AsyncStorage.getItem('token');
+      if (token) {
+        // Optional: verify token validity with API
+        // If valid, navigate directly to main
+        navigation.replace('MainTabs');
+        if (onLogin) onLogin();
+      }
+    };
+    checkToken();
+  }, []);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -70,14 +85,12 @@ export default function LoginScreen({ navigation, onLogin }: Props) {
         return;
       }
 
-      // Save token for future authenticated requests
+      // Save token for future auto-login
       await AsyncStorage.setItem('token', token);
       console.log('TOKEN SAVED:', token);
 
       // Notify parent component (e.g., App.tsx) about login
-      if (onLogin) {
-        onLogin();
-      }
+      if (onLogin) onLogin();
 
       // Navigate to main app
       navigation.replace('MainTabs');

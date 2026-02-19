@@ -1,4 +1,3 @@
-// AppNavigator.tsx
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -21,36 +20,39 @@ interface AppNavigatorProps {
   initialRouteName: keyof RootStackParamList;
 }
 
+const screenOptions = {
+  headerStyle: { backgroundColor: '#111827' },
+  headerTintColor: '#fff',
+  headerTitleStyle: { fontWeight: 'bold' },
+};
+
 export default function AppNavigator({ initialRouteName }: AppNavigatorProps) {
   return (
     <NavigationContainer>
       <Stack.Navigator
         initialRouteName={initialRouteName}
-        screenOptions={{
-          headerStyle: { backgroundColor: '#111827' },
-          headerTintColor: '#fff',
-          headerTitleStyle: { fontWeight: 'bold' },
-        }}
+        screenOptions={screenOptions}
       >
-        {/* Routes as before */}
+        {/* Authentication screens */}
         <Stack.Screen
           name="Login"
           component={LoginScreen}
           options={{ title: 'Login' }}
         />
-
         <Stack.Screen
           name="SignUp"
           component={SignUpScreen}
           options={{ title: 'Sign Up' }}
         />
 
+        {/* Main app */}
         <Stack.Screen
           name="MainTabs"
           component={BottomTabNavigator}
           options={{ headerShown: false }}
         />
 
+        {/* Feature screens */}
         <Stack.Screen
           name="CrashDetection"
           component={CrashDetectionScreen}

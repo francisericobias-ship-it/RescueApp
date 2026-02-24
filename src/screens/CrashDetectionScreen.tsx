@@ -10,138 +10,201 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Geolocation from '@react-native-community/geolocation'; // or 'react-native-geolocation-service'
+import Geolocation from '@react-native-community/geolocation';
+import NetInfo from '@react-native-community/netinfo';
+import DeviceInfo from 'react-native-device-info';
 
 type CrashSensitivity = 'low' | 'medium' | 'high';
+type CrashSeverity = 'LOW' | 'MODERATE' | 'SEVERE' | 'CRITICAL';
 
 const CRASH_THRESHOLDS: Record<CrashSensitivity, number> = {
-  low: 6,
-  medium: 8,
-  high: 10,
+  low: 35,
+  medium: 25,
+  high: 18,
 };
 
 interface Props {
   navigation: any;
-  route: {
-    params?: {
-      crashSensitivity?: CrashSensitivity;
-    };
-  };
+  route?: any;
 }
 
-export default function CrashDetectionScreen({ navigation, route }: Props) {
+const CrashDetectionScreen: React.FC<Props> = ({ navigation, route }) => {
   const [countdown, setCountdown] = useState(10);
   const [cancelled, setCancelled] = useState(false);
   const [sensitivity, setSensitivity] = useState<CrashSensitivity>('medium');
   const [impactForce, setImpactForce] = useState(0);
   const [isSending, setIsSending] = useState(false);
+  const [crashDetected, setCrashDetected] = useState(false);
+  const [severity, setSeverity] = useState<CrashSeverity>('LOW');
 
   const animatedCountdown = useRef(new Animated.Value(1)).current;
+  const countdownTimer = useRef<NodeJS.Timeout | null>(null);
   const impactInterval = useRef<NodeJS.Timeout | null>(null);
+  const alreadySent = useRef(false);
 
-  // Load sensitivity from params or storage
+  // 🔹 Determine severity
+  const determineSeverity = (gForce: number): CrashSeverity => {
+    if (gForce >= 40) return 'CRITICAL';
+    if (gForce >= 30) return 'SEVERE';
+    if (gForce >= 20) return 'MODERATE';
+    return 'LOW';
+  };
+
+  // 🔹 Load sensitivity safely
   useEffect(() => {
     const loadSensitivity = async () => {
-      if (route?.params?.crashSensitivity) {
-        setSensitivity(route.params.crashSensitivity);
-        return;
-      }
-      const stored = await AsyncStorage.getItem('@settings_crash_sensitivity');
-      if (stored === 'low' || stored === 'medium' || stored === 'high') {
-        setSensitivity(stored);
+      try {
+        if (route?.params?.crashSensitivity) {
+          setSensitivity(route.params.crashSensitivity);
+          return;
+        }
+
+        const stored = await AsyncStorage.getItem('@settings_crash_sensitivity');
+
+        if (stored === 'low' || stored === 'medium' || stored === 'high') {
+          setSensitivity(stored);
+        }
+      } catch (e) {
+        console.log('Sensitivity load error:', e);
       }
     };
+
     loadSensitivity();
   }, [route?.params?.crashSensitivity]);
 
-  // Simulate impact sensor updates
+  // 🔹 Simulated impact (temporary)
   useEffect(() => {
     impactInterval.current = setInterval(() => {
-      const simulatedImpact = Math.random() * 12; // 0-12G
+      const simulatedImpact = Math.random() * 45;
       setImpactForce(simulatedImpact);
     }, 1500);
+
     return () => {
       if (impactInterval.current) clearInterval(impactInterval.current);
     };
   }, []);
 
-  // Countdown animation & effect
+  // 🔹 Detect crash
   useEffect(() => {
-    if (countdown <= 0 || cancelled) return;
+    if (!crashDetected && impactForce >= CRASH_THRESHOLDS[sensitivity]) {
+      const crashSeverity = determineSeverity(impactForce);
+      setSeverity(crashSeverity);
+      setCrashDetected(true);
+      setCountdown(10);
+    }
+  }, [impactForce, sensitivity, crashDetected]);
 
-    // Animate countdown scale
+  // 🔹 Countdown animation
+  useEffect(() => {
+    if (!crashDetected || countdown <= 0 || cancelled) return;
+
     Animated.timing(animatedCountdown, {
       toValue: 0,
       duration: 1000,
-      useNativeDriver: false,
-    }).start();
+      useNativeDriver: true,
+    }).start(() => animatedCountdown.setValue(1));
 
-    // Set timer for next countdown
-    const timer = setTimeout(() => {
-      setCountdown((prev) => prev - 1);
-      animatedCountdown.setValue(1);
+    countdownTimer.current = setTimeout(() => {
+      setCountdown(prev => prev - 1);
     }, 1000);
 
-    return () => clearTimeout(timer);
-  }, [countdown, cancelled, animatedCountdown]);
+    return () => {
+      if (countdownTimer.current) clearTimeout(countdownTimer.current);
+    };
+  }, [countdown, crashDetected, cancelled]);
 
-  // Detect crash based on impact force and countdown
+  // 🔹 Auto send once
   useEffect(() => {
-    if (
-      countdown === 0 &&
-      !cancelled &&
-      impactForce >= CRASH_THRESHOLDS[sensitivity]
-    ) {
+    if (crashDetected && countdown <= 0 && !cancelled && !alreadySent.current) {
+      alreadySent.current = true;
       handleCrashDetected();
     }
-  }, [impactForce, countdown, cancelled, sensitivity]);
+  }, [countdown, crashDetected, cancelled]);
 
-  // Fetch location and send crash report
+  // 🔹 Send crash to backend
   const handleCrashDetected = async () => {
     setIsSending(true);
+
     try {
+      const token = await AsyncStorage.getItem('token');
+
+      if (!token) {
+        Alert.alert('Auth Error', 'Please login again.');
+        setIsSending(false);
+        return;
+      }
+
       const location = await getCurrentLocation();
 
-      // Prepare crash data
+      if (!location) {
+        Alert.alert('Error', 'Location not available');
+        setIsSending(false);
+        return;
+      }
+
+      const batteryLevel = await DeviceInfo.getBatteryLevel();
+      const batteryPercent = Math.round(batteryLevel * 100);
+
+      const netState = await NetInfo.fetch();
+      const networkType = netState.type ?? 'unknown';
+
       const crashData = {
-        type: 'CRASH',
-        description: `Crash detected (${impactForce.toFixed(2)}G | ${sensitivity})`,
-        impact_force: impactForce,
-        sensitivity,
-        latitude: location?.latitude,
-        longitude: location?.longitude,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        impact_force: Number(impactForce.toFixed(2)),
+        device_battery: batteryPercent,
+        network_type: networkType,
       };
 
-      // Send to backend API
-      const response = await fetch('https://your-api-endpoint.com/crash-alerts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(crashData),
-      });
+      console.log('🚨 CRASH PAYLOAD:', crashData);
+
+      const response = await fetch(
+        'https://rescuelink-backend-j0gz.onrender.com/api/v1/crash',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(crashData),
+        }
+      );
+
+      const text = await response.text();
+      console.log('📡 RAW RESPONSE:', text);
+
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch {}
 
       if (response.ok) {
-        Alert.alert('🚨 Emergency Alert', 'Crash detected. SOS sent!', [
-          { text: 'OK', onPress: () => navigation.goBack() },
-        ]);
+        Alert.alert('Success', data.message || 'Crash event recorded');
       } else {
-        throw new Error('Failed to send crash alert');
+        Alert.alert(
+          'Error',
+          data.message || `Server error (${response.status})`
+        );
       }
     } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'Unable to send crash alert or get location.');
+      console.log('❌ Crash send error:', error);
+      Alert.alert('Error', 'Unable to send crash alert.');
     } finally {
       setIsSending(false);
     }
   };
 
-  const getCurrentLocation = () => {
-    return new Promise<{ latitude: number; longitude: number } | null>((resolve, reject) => {
+  // 🔹 Get GPS location
+  const getCurrentLocation = (): Promise<
+    { latitude: number; longitude: number } | null
+  > => {
+    return new Promise(resolve => {
       Geolocation.getCurrentPosition(
-        (position) => {
+        position => {
           const { latitude, longitude } = position.coords;
           resolve({ latitude, longitude });
         },
-        (error) => {
+        error => {
           console.log('Geolocation error:', error);
           resolve(null);
         },
@@ -152,14 +215,28 @@ export default function CrashDetectionScreen({ navigation, route }: Props) {
 
   const handleCancel = () => {
     setCancelled(true);
+    if (countdownTimer.current) clearTimeout(countdownTimer.current);
   };
 
+  const getSeverityColor = () => {
+    switch (severity) {
+      case 'CRITICAL':
+        return '#C53030';
+      case 'SEVERE':
+        return '#E53E3E';
+      case 'MODERATE':
+        return '#DD6B20';
+      default:
+        return '#38A169';
+    }
+  };
+
+  // 🔴 Cancelled screen
   if (cancelled) {
     return (
       <View style={styles.cancelledContainer}>
         <Icon name="x-circle" size={96} color="#E53E3E" />
         <Text style={styles.cancelledTitle}>Alert Cancelled</Text>
-        <Text style={styles.cancelledDesc}>The emergency alert has been cancelled.</Text>
         <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
           <Text style={styles.backButtonText}>Back to Home</Text>
         </Pressable>
@@ -169,17 +246,20 @@ export default function CrashDetectionScreen({ navigation, route }: Props) {
 
   return (
     <View style={styles.container}>
-      {/* Impact Icon */}
       <View style={styles.iconCircle}>
-        <Icon name="alert-triangle" size={96} color="#E53E3E" />
+        <Icon name="alert-triangle" size={96} color={getSeverityColor()} />
       </View>
 
-      {/* Crash Info */}
       <Text style={styles.title}>Crash Detected!</Text>
-      <Text style={styles.sensitivityText}>Sensitivity: {sensitivity.toUpperCase()}</Text>
-      <Text style={styles.impact}>Impact Force: {impactForce.toFixed(2)} G</Text>
 
-      {/* Countdown Circle with animated scale */}
+      <Text style={[styles.impact, { color: getSeverityColor() }]}>
+        Impact Force: {impactForce.toFixed(2)} G
+      </Text>
+
+      <Text style={[styles.severityText, { color: getSeverityColor() }]}>
+        Severity: {severity}
+      </Text>
+
       <Animated.View
         style={[
           styles.countdownCircle,
@@ -189,12 +269,14 @@ export default function CrashDetectionScreen({ navigation, route }: Props) {
         <Text style={styles.countdownText}>{countdown}</Text>
       </Animated.View>
 
-      {/* Cancel Button */}
-      <Pressable style={styles.cancelButton} onPress={handleCancel} disabled={isSending}>
+      <Pressable
+        style={styles.cancelButton}
+        onPress={handleCancel}
+        disabled={isSending}
+      >
         <Text style={styles.cancelButtonText}>I'm OK – Cancel Alert</Text>
       </Pressable>
 
-      {/* Show activity indicator when sending */}
       {isSending && (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#E53E3E" />
@@ -203,7 +285,9 @@ export default function CrashDetectionScreen({ navigation, route }: Props) {
       )}
     </View>
   );
-}
+};
+
+export default CrashDetectionScreen;
 
 const styles = StyleSheet.create({
   container: {
@@ -223,16 +307,15 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
     color: '#2D3748',
-    marginBottom: 8,
-  },
-  sensitivityText: {
-    fontSize: 16,
-    color: '#718096',
   },
   impact: {
+    marginTop: 10,
     fontSize: 18,
-    color: '#E53E3E',
-    marginBottom: 20,
+  },
+  severityText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginTop: 5,
   },
   countdownCircle: {
     width: 140,
@@ -253,7 +336,6 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 40,
     borderRadius: 24,
-    marginTop: 20,
   },
   cancelButtonText: {
     color: '#fff',
@@ -273,18 +355,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
   },
   cancelledTitle: {
     fontSize: 26,
     fontWeight: 'bold',
     marginTop: 20,
-  },
-  cancelledDesc: {
-    textAlign: 'center',
-    marginTop: 10,
-    color: '#718096',
-    fontSize: 16,
   },
   backButton: {
     marginTop: 20,

@@ -6,30 +6,55 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
+  Platform,
 } from 'react-native';
 import axios from 'axios';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 export default function SignUpScreen({ navigation }) {
-  // State variables for form fields
+  // State variables
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [middleName, setMiddleName] = useState('');
-  const [extName, setExtName] = useState('');
+  const [extName, setExtName] = useState(''); // optional, nullable
   const [userPhoneNumber, setUserPhoneNumber] = useState('');
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
+  const [relativeNumber, setRelativeNumber] = useState('');
+  const [birthDate, setBirthDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [loading, setLoading] = useState(false);
+  const role = 'admin'; // fixed
 
-  // Handler for sign-up button
+  // Format date as YYYY-MM-DD
+  const formatDate = (date) => date.toISOString().split('T')[0];
+
+  // Handler for date change
+  const onChangeDate = (event, selectedDate) => {
+    if (Platform.OS !== 'ios') {
+      setShowDatePicker(false);
+    }
+    if (selectedDate) {
+      setBirthDate(selectedDate);
+    }
+  };
+
   const handleSignUp = async () => {
     // Basic validation
     if (
-      !firstName || !lastName || !middleName || !extName ||
-      !userPhoneNumber || !email || !username || !password || !passwordConfirmation
+      !firstName.trim() ||
+      !lastName.trim() ||
+      !middleName.trim() ||
+      !userPhoneNumber.trim() ||
+      !email.trim() ||
+      !username.trim() ||
+      !password ||
+      !passwordConfirmation ||
+      !relativeNumber.trim()
     ) {
-      Alert.alert('Error', 'Please fill all fields');
+      Alert.alert('Error', 'Please fill all required fields');
       return;
     }
 
@@ -46,20 +71,17 @@ export default function SignUpScreen({ navigation }) {
           first_name: firstName,
           last_name: lastName,
           middle_name: middleName,
-          ext_name: extName,
+          ext_name: extName || null, // optional, nullable
           username,
           email,
           password,
           password_confirmation: passwordConfirmation,
           user_phone_number: userPhoneNumber,
-          role: 'admin', // Adjust role as needed
-        },
-        {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 15000,
+          role,
+          birth_date: formatDate(birthDate),
+          relative_number: relativeNumber,
         }
       );
-
       Alert.alert('Success', response.data.message || 'User registered');
       if (navigation?.navigate) {
         navigation.navigate('Login');
@@ -67,14 +89,9 @@ export default function SignUpScreen({ navigation }) {
     } catch (error) {
       console.log('Axios error:', error);
       if (error.response) {
-        Alert.alert(
-          'Error',
-          error.response.data?.message || 'Failed to create account'
-        );
-      } else if (error.request) {
-        Alert.alert('Error', 'No response from server');
+        Alert.alert('Error', error.response.data?.message || 'Failed to create account');
       } else {
-        Alert.alert('Error', 'An unexpected error occurred');
+        Alert.alert('Error', 'Network/server error');
       }
     } finally {
       setLoading(false);
@@ -85,7 +102,7 @@ export default function SignUpScreen({ navigation }) {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Create an Account</Text>
 
-      {/* Input Fields */}
+      {/* Existing Input Fields */}
       <TextInput
         style={styles.input}
         placeholder="First Name"
@@ -104,12 +121,33 @@ export default function SignUpScreen({ navigation }) {
         value={middleName}
         onChangeText={setMiddleName}
       />
+
+      {/* ext_name input, optional */}
       <TextInput
         style={styles.input}
-        placeholder="Ext Name"
+        placeholder="Ext Name (Optional)"
         value={extName}
         onChangeText={setExtName}
       />
+
+      {/* Birth Date Picker */}
+      <TouchableOpacity
+        style={styles.input}
+        onPress={() => setShowDatePicker(true)}
+      >
+        <Text>Birth Date: {formatDate(birthDate)}</Text>
+      </TouchableOpacity>
+      {showDatePicker && (
+        <DateTimePicker
+          value={birthDate}
+          mode="date"
+          display="default"
+          maximumDate={new Date()}
+          onChange={onChangeDate}
+        />
+      )}
+
+      {/* Other inputs */}
       <TextInput
         style={styles.input}
         placeholder="Phone Number"
@@ -145,6 +183,16 @@ export default function SignUpScreen({ navigation }) {
         secureTextEntry
         value={passwordConfirmation}
         onChangeText={setPasswordConfirmation}
+      />
+
+      {/* Role fixed as 'admin' */}
+      {/* Relative Number */}
+      <TextInput
+        style={styles.input}
+        placeholder="Relative Number"
+        keyboardType="phone-pad"
+        value={relativeNumber}
+        onChangeText={setRelativeNumber}
       />
 
       {/* Sign Up Button */}
@@ -184,6 +232,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 10,
     marginBottom: 15,
+    justifyContent: 'center',
   },
   signupButton: {
     width: '100%',

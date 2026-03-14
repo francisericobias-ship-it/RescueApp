@@ -4,29 +4,39 @@ import AppNavigator from './src/navigation/AppNavigator';
 import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+type InitialRouteType = 'Onboarding' | 'Login' | 'MainTabs';
+
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
-  const [initialRoute, setInitialRoute] = useState<'Login' | 'MainTabs'>('Login');
+  const [initialRoute, setInitialRoute] = useState<InitialRouteType>('Login');
 
   useEffect(() => {
-    const checkToken = async () => {
+    const checkAppState = async () => {
       try {
+        const onboarded = await AsyncStorage.getItem('onboarded');
         const token = await AsyncStorage.getItem('token');
-        if (token) {
-          // Optional: verify token validity here
-          setInitialRoute('MainTabs');
-        } else {
-          setInitialRoute('Login');
+
+        // 🔥 FIRST TIME USER
+        if (!onboarded) {
+          setInitialRoute('Onboarding');
+        } 
+        // ✅ Already onboarded
+        else {
+          if (token) {
+            setInitialRoute('MainTabs');
+          } else {
+            setInitialRoute('Login');
+          }
         }
       } catch (e) {
-        console.log('Error reading token:', e);
+        console.log('Error reading storage:', e);
         setInitialRoute('Login');
       } finally {
         setIsLoading(false);
       }
     };
 
-    checkToken();
+    checkAppState();
   }, []);
 
   if (isLoading) {

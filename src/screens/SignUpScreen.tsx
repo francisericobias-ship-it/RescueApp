@@ -7,16 +7,16 @@ import {
   StyleSheet,
   Alert,
   Platform,
+  View,
 } from 'react-native';
 import axios from 'axios';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 export default function SignUpScreen({ navigation }) {
-  // State variables
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [middleName, setMiddleName] = useState('');
-  const [extName, setExtName] = useState(''); // optional, nullable
+  const [extName, setExtName] = useState('');
   const [userPhoneNumber, setUserPhoneNumber] = useState('');
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
@@ -26,52 +26,36 @@ export default function SignUpScreen({ navigation }) {
   const [birthDate, setBirthDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [loading, setLoading] = useState(false);
-  const role = 'admin'; // fixed
+  const role = 'admin';
 
-  // Format date as YYYY-MM-DD
-  const formatDate = (date) => date.toISOString().split('T')[0];
+  const formatDate = (date: Date) => date.toISOString().split('T')[0];
 
-  // Handler for date change
-  const onChangeDate = (event, selectedDate) => {
-    if (Platform.OS !== 'ios') {
-      setShowDatePicker(false);
-    }
-    if (selectedDate) {
-      setBirthDate(selectedDate);
-    }
+  const onChangeDate = (event: any, selectedDate?: Date) => {
+    if (Platform.OS !== 'ios') setShowDatePicker(false);
+    if (selectedDate) setBirthDate(selectedDate);
   };
 
   const handleSignUp = async () => {
-    // Basic validation
     if (
-      !firstName.trim() ||
-      !lastName.trim() ||
-      !middleName.trim() ||
-      !userPhoneNumber.trim() ||
-      !email.trim() ||
-      !username.trim() ||
-      !password ||
-      !passwordConfirmation ||
-      !relativeNumber.trim()
+      !firstName || !lastName || !middleName || !userPhoneNumber ||
+      !email || !username || !password || !passwordConfirmation || !relativeNumber
     ) {
       Alert.alert('Error', 'Please fill all required fields');
       return;
     }
-
     if (password !== passwordConfirmation) {
       Alert.alert('Error', 'Passwords do not match');
       return;
     }
-
     setLoading(true);
     try {
-      const response = await axios.post(
+      const res = await axios.post(
         'https://rescuelink-backend-j0gz.onrender.com/api/v1/auth/register',
         {
           first_name: firstName,
           last_name: lastName,
           middle_name: middleName,
-          ext_name: extName || null, // optional, nullable
+          ext_name: extName || null,
           username,
           email,
           password,
@@ -82,173 +66,93 @@ export default function SignUpScreen({ navigation }) {
           relative_number: relativeNumber,
         }
       );
-      Alert.alert('Success', response.data.message || 'User registered');
-      if (navigation?.navigate) {
-        navigation.navigate('Login');
-      }
-    } catch (error) {
-      console.log('Axios error:', error);
-      if (error.response) {
-        Alert.alert('Error', error.response.data?.message || 'Failed to create account');
-      } else {
-        Alert.alert('Error', 'Network/server error');
-      }
+      Alert.alert('Success', res.data.message || 'User registered');
+      navigation.navigate('Login');
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.message || 'Network/server error');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Create an Account</Text>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+    >
+      <Text style={styles.title}>Create Your RescueLink Account</Text>
 
-      {/* Existing Input Fields */}
-      <TextInput
-        style={styles.input}
-        placeholder="First Name"
-        value={firstName}
-        onChangeText={setFirstName}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Last Name"
-        value={lastName}
-        onChangeText={setLastName}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Middle Name"
-        value={middleName}
-        onChangeText={setMiddleName}
-      />
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Personal Info</Text>
+        <TextInput style={styles.input} placeholder="First Name" value={firstName} onChangeText={setFirstName} />
+        <TextInput style={styles.input} placeholder="Last Name" value={lastName} onChangeText={setLastName} />
+        <TextInput style={styles.input} placeholder="Middle Name" value={middleName} onChangeText={setMiddleName} />
+        <TextInput style={styles.input} placeholder="Ext Name (Optional)" value={extName} onChangeText={setExtName} />
+        <TouchableOpacity style={styles.input} onPress={() => setShowDatePicker(true)}>
+          <Text>Birth Date: {formatDate(birthDate)}</Text>
+        </TouchableOpacity>
+        {showDatePicker && (
+          <DateTimePicker
+            value={birthDate}
+            mode="date"
+            display="default"
+            maximumDate={new Date()}
+            onChange={onChangeDate}
+          />
+        )}
+        <TextInput style={styles.input} placeholder="Phone Number" keyboardType="phone-pad" value={userPhoneNumber} onChangeText={setUserPhoneNumber} />
+      </View>
 
-      {/* ext_name input, optional */}
-      <TextInput
-        style={styles.input}
-        placeholder="Ext Name (Optional)"
-        value={extName}
-        onChangeText={setExtName}
-      />
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Account Info</Text>
+        <TextInput style={styles.input} placeholder="Email" keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
+        <TextInput style={styles.input} placeholder="Username" autoCapitalize="none" value={username} onChangeText={setUsername} />
+        <TextInput style={styles.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} />
+        <TextInput style={styles.input} placeholder="Confirm Password" secureTextEntry value={passwordConfirmation} onChangeText={setPasswordConfirmation} />
+      </View>
 
-      {/* Birth Date Picker */}
-      <TouchableOpacity
-        style={styles.input}
-        onPress={() => setShowDatePicker(true)}
-      >
-        <Text>Birth Date: {formatDate(birthDate)}</Text>
-      </TouchableOpacity>
-      {showDatePicker && (
-        <DateTimePicker
-          value={birthDate}
-          mode="date"
-          display="default"
-          maximumDate={new Date()}
-          onChange={onChangeDate}
-        />
-      )}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Emergency Contact</Text>
+        <TextInput style={styles.input} placeholder="Relative Number" keyboardType="phone-pad" value={relativeNumber} onChangeText={setRelativeNumber} />
+      </View>
 
-      {/* Other inputs */}
-      <TextInput
-        style={styles.input}
-        placeholder="Phone Number"
-        keyboardType="phone-pad"
-        value={userPhoneNumber}
-        onChangeText={setUserPhoneNumber}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        keyboardType="email-address"
-        autoCapitalize="none"
-        value={email}
-        onChangeText={setEmail}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Username"
-        autoCapitalize="none"
-        value={username}
-        onChangeText={setUsername}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Confirm Password"
-        secureTextEntry
-        value={passwordConfirmation}
-        onChangeText={setPasswordConfirmation}
-      />
-
-      {/* Role fixed as 'admin' */}
-      {/* Relative Number */}
-      <TextInput
-        style={styles.input}
-        placeholder="Relative Number"
-        keyboardType="phone-pad"
-        value={relativeNumber}
-        onChangeText={setRelativeNumber}
-      />
-
-      {/* Sign Up Button */}
       <TouchableOpacity
         style={[styles.signupButton, loading && styles.disabledButton]}
         onPress={handleSignUp}
         disabled={loading}
       >
-        <Text style={styles.signupText}>
-          {loading ? 'Creating Account...' : 'Sign Up'}
-        </Text>
+        <Text style={styles.signupText}>{loading ? 'Creating Account...' : 'Sign Up'}</Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    backgroundColor: '#fff',
-  },
-  content: {
-    paddingVertical: 40,
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 24,
-    marginBottom: 20,
-    fontWeight: 'bold',
-  },
+  container: { flex: 1, backgroundColor: '#ffffff', paddingHorizontal: 20 },
+  content: { paddingVertical: 40 },
+  title: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 30, textAlign: 'center' },
+  section: { marginBottom: 25 },
+  sectionTitle: { fontSize: 18, color: '#e74c3c', marginBottom: 10, fontWeight: '600' },
   input: {
     width: '100%',
     height: 50,
-    borderColor: '#ccc',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 10,
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    paddingHorizontal: 15,
     marginBottom: 15,
     justifyContent: 'center',
+    color: '#fff',
   },
   signupButton: {
     width: '100%',
     height: 50,
-    backgroundColor: '#007bff',
-    borderRadius: 8,
+    backgroundColor: '#e74c3c',
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 10,
   },
-  disabledButton: {
-    backgroundColor: '#999',
-  },
-  signupText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  disabledButton: { backgroundColor: '#999' },
+  signupText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 });

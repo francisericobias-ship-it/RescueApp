@@ -8,20 +8,23 @@ import {
   Animated,
   Alert,
   ScrollView,
-  Button,
   Modal,
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
   Platform,
+  Image,
+  Button, // Import ng Button
 } from 'react-native';
 
 import { useFocusEffect } from '@react-navigation/native';
 import Geolocation from '@react-native-community/geolocation';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 
 import PushNotification from 'react-native-push-notification';
 import { requestLocationPermission } from '../utils/LocationPermissions';
+
 
 export type HistoryEvent = {
   id: string;
@@ -75,7 +78,7 @@ const fetchLocationName = async (lat: number, lng: number): Promise<string> => {
 
 const setupPushNotifications = () => {
   PushNotification.configure({
-    onNotification: function (notification) {
+    onNotification: (notification) => {
       console.log('NOTIFICATION:', notification);
     },
     requestPermissions: Platform.OS === 'ios',
@@ -102,23 +105,24 @@ export default function HomeScreen({ navigation }) {
 
   const [modalVisible, setModalVisible] = useState(false);
   const [sending, setSending] = useState(false);
-  const [title, setTitle] = useState('Emergency SOS');
-  const [description, setDescription] = useState('Help needed at my location.');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
   const [locationText, setLocationText] = useState('');
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
   const [locationName, setLocationName] = useState('');
+  const [selectedImage, setSelectedImage] = useState<any>(null);
 
   const sosScale = useRef(new Animated.Value(1)).current;
   const autoOffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchId = useRef<number | null>(null);
 
-  // Initialize notifications and load data on focus
+  // Load settings & data on focus
   useFocusEffect(
     useCallback(() => {
       const loadData = async () => {
         const val = await AsyncStorage.getItem('@settings_crash_sensitivity');
-        if (['low', 'medium', 'high'].includes(val || '')) {
+        if (['low', 'medium', 'high'].includes(val ?? '')) {
           setCrashSensitivity(val);
         }
         const events = await getHistoryEvents();
@@ -134,6 +138,7 @@ export default function HomeScreen({ navigation }) {
     const startWatching = async () => {
       const granted = await requestLocationPermission();
       if (!granted) return;
+
       watchId.current = Geolocation.watchPosition(
         (pos) => {
           const gpsSpeed = pos.coords.speed;
@@ -145,12 +150,7 @@ export default function HomeScreen({ navigation }) {
           }
         },
         (error) => console.log('Geolocation error:', error.message),
-        {
-          enableHighAccuracy: true,
-          distanceFilter: 1,
-          interval: 2000,
-          fastestInterval: 1000,
-        }
+        { enableHighAccuracy: true, distanceFilter: 1, interval: 2000, fastestInterval: 1000 }
       );
     };
     startWatching();
@@ -184,6 +184,7 @@ export default function HomeScreen({ navigation }) {
     };
   }, [speed, drivingMode]);
 
+  // Get current location
   const getLocation = async () => {
     const granted = await requestLocationPermission();
     if (!granted) {
@@ -208,6 +209,63 @@ export default function HomeScreen({ navigation }) {
     });
   };
 
+  // Image picker functions
+  const pickImage = () => {
+    launchImageLibrary({ mediaType: 'photo' }, (response) => {
+      if (response.assets && response.assets.length > 0) {
+        setSelectedImage(response.assets[0]);
+      }
+    });
+  };
+
+  const takePhoto = () => {
+    launchCamera({ mediaType: 'photo' }, (response) => {
+      if (response.assets && response.assets.length > 0) {
+        setSelectedImage(response.assets[0]);
+      }
+    });
+  };
+
+  // Upload image to backend
+  const uploadImage = async () => {
+    if (!selectedImage) return null;
+
+    try {
+      const token = await AsyncStorage.getItem('token');
+
+      const formData = new FormData();
+      formData.append('image', {
+        uri: selectedImage.uri,
+        type: selectedImage.type || 'image/jpeg',
+        name: selectedImage.fileName || 'photo.jpg',
+      } as any);
+
+      const response = await fetch(
+        'https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts/upload-image',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+        }
+      );
+
+      const data = await response.json();
+      if (response.ok) {
+        return data.url;
+      } else {
+        throw new Error(data.message || 'Image upload failed');
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      Alert.alert('Upload Failed', 'Failed to upload image. Please try again.');
+      throw error;
+    }
+  };
+
+  // Send manual SOS
   const handleManualSOS = async (titleInput, descriptionInput) => {
     setSending(true);
     try {
@@ -227,48 +285,63 @@ export default function HomeScreen({ navigation }) {
       const name = await fetchLocationName(coords.lat, coords.lng);
       setLocationName(name);
 
-      // Send alert to backend
-      await fetch('https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // 'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          alert_type: 'accident',
-          severity: 'high',
-          title: titleInput,
-          description: descriptionInput,
-          location: name,
+      let imageUrl = null;
+      if (selectedImage) {
+        imageUrl = await uploadImage();
+      }
+
+      const response = await fetch(
+        'https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            alert_type: 'accident',
+            severity: 'high',
+            title: titleInput,
+            description: descriptionInput,
+            location: name,
+            latitude: coords.lat,
+            longitude: coords.lng,
+            image_url: imageUrl,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (response.ok) {
+        Alert.alert('SOS Sent', data.message || 'Emergency alert submitted successfully 🚨');
+
+        const newEvent: HistoryEvent = {
+          id: Date.now().toString(),
+          type: 'accident',
+          timestamp: Date.now(),
           latitude: coords.lat,
           longitude: coords.lng,
-          image_url: 'string',
-        }),
-      });
-
-      Alert.alert('SOS Sent', 'Emergency alert submitted successfully 🚑');
-
-      const newEvent: HistoryEvent = {
-        id: Date.now().toString(),
-        type: 'accident',
-        timestamp: Date.now(),
-        latitude: coords.lat,
-        longitude: coords.lng,
-        description: descriptionInput,
-      };
-      await saveHistoryEvent(newEvent);
-      const updatedHistory = await getHistoryEvents();
-      setHistory(updatedHistory);
-      setModalVisible(false);
+          description: descriptionInput,
+        };
+        await saveHistoryEvent(newEvent);
+        const updatedHistory = await getHistoryEvents();
+        setHistory(updatedHistory);
+        setModalVisible(false);
+        setSelectedImage(null);
+      } else {
+        Alert.alert('Error', data.message || `Server error (${response.status})`);
+      }
     } catch (err) {
       console.error(err);
       Alert.alert('Network Error', 'Could not connect to server.');
+      setSelectedImage(null);
     } finally {
       setSending(false);
     }
   };
 
-  // Updated showNotification to include speed when activating driving mode
+  // Show notification
   const showNotification = (title, message, speed?) => {
     const finalMsg = speed ? `${message} at ${speed} km/h` : message;
     PushNotification.localNotification({
@@ -280,6 +353,7 @@ export default function HomeScreen({ navigation }) {
 
   return (
     <ScrollView style={styles.container}>
+      {/* Header */}
       <Text style={styles.header}>RescueLink</Text>
 
       {/* Speed & Crash Sensitivity */}
@@ -310,17 +384,7 @@ export default function HomeScreen({ navigation }) {
         </Pressable>
       </Animated.View>
 
-      {/* *** Tinatanggal na ang button na ito *** */}
-      {/*
-      <TouchableOpacity
-        style={styles.notificationButton}
-        onPress={() => showNotification('Test Notification', 'This is a test notification!')}
-      >
-        <Text style={styles.notificationButtonText}>Send Notification</Text>
-      </TouchableOpacity>
-      */}
-
-      {/* Navigation to Crash Detection */}
+      {/* Open Crash Detection */}
       <Button
         title="Open Crash Detection"
         color="#e74c3c"
@@ -343,6 +407,8 @@ export default function HomeScreen({ navigation }) {
       <Modal visible={modalVisible} animationType="slide">
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Manual SOS Request</Text>
+
+          {/* Input fields */}
           <TextInput
             style={styles.input}
             placeholder="Title *"
@@ -357,6 +423,7 @@ export default function HomeScreen({ navigation }) {
             onChangeText={setDescription}
           />
 
+          {/* Location input */}
           <TextInput
             style={styles.input}
             placeholder="Location"
@@ -374,6 +441,32 @@ export default function HomeScreen({ navigation }) {
             </Text>
           )}
 
+          {/* Image selection buttons */}
+          <View style={styles.imageButtonsContainer}>
+            <TouchableOpacity style={styles.imageButton} onPress={pickImage}>
+              <Text style={styles.imageButtonText}>Choose Photo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.imageButton} onPress={takePhoto}>
+              <Text style={styles.imageButtonText}>Take Photo</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Show selected image with cancel */}
+          {selectedImage && (
+            <View style={styles.selectedImageContainer}>
+              <Image source={{ uri: selectedImage.uri }} style={styles.thumbnail} />
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => {
+                  setSelectedImage(null);
+                }}
+              >
+                <Text style={styles.closeButtonText}>X</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Submit or activity indicator */}
           {sending ? (
             <ActivityIndicator size="large" color="red" />
           ) : (
@@ -385,9 +478,13 @@ export default function HomeScreen({ navigation }) {
             </TouchableOpacity>
           )}
 
+          {/* Cancel button */}
           <TouchableOpacity
             style={styles.cancelBtn}
-            onPress={() => setModalVisible(false)}
+            onPress={() => {
+              setModalVisible(false);
+              setSelectedImage(null);
+            }}
           >
             <Text style={{ color: '#333' }}>Cancel</Text>
           </TouchableOpacity>
@@ -397,6 +494,7 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
+// Styles
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: '#f9fafb' },
   header: {
@@ -447,18 +545,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginTop: 20,
   },
-  notificationButton: {
-    marginTop: 20,
-    backgroundColor: '#007bff',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  notificationButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
   modalContainer: {
     flex: 1,
     padding: 20,
@@ -501,5 +587,44 @@ const styles = StyleSheet.create({
   cancelBtn: {
     marginTop: 10,
     alignItems: 'center',
+  },
+  selectedImageContainer: {
+    position: 'relative',
+    alignSelf: 'center',
+    marginVertical: 10,
+  },
+  thumbnail: {
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+  },
+  closeButton: {
+    position: 'absolute',
+    top: -10,
+    right: -10,
+    backgroundColor: '#f00',
+    borderRadius: 12,
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  imageButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginVertical: 10,
+  },
+  imageButton: {
+    backgroundColor: '#007bff',
+    padding: 10,
+    borderRadius: 8,
+  },
+  imageButtonText: {
+    color: '#fff',
+    fontSize: 14,
   },
 });

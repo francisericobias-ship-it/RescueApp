@@ -13,90 +13,105 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Geolocation from '@react-native-community/geolocation';
 import NetInfo from '@react-native-community/netinfo';
 import DeviceInfo from 'react-native-device-info';
+import {
+  accelerometer,
+  setUpdateIntervalForType,
+  SensorTypes,
+} from 'react-native-sensors';
+import { map, filter } from 'rxjs/operators';
 
 type CrashSensitivity = 'low' | 'medium' | 'high';
 type CrashSeverity = 'LOW' | 'MODERATE' | 'SEVERE' | 'CRITICAL';
 
 const CRASH_THRESHOLDS: Record<CrashSensitivity, number> = {
-  low: 35,
-  medium: 25,
-  high: 18,
+  low: 3.5,
+  medium: 2.8,
+  high: 2.2,
 };
 
-interface Props {
-  navigation: any;
-  route?: any;
-}
+const STILLNESS_THRESHOLD = 0.3;
+const STILLNESS_TIME = 5000;
 
-const CrashDetectionScreen: React.FC<Props> = ({ navigation, route }) => {
+export default function CrashDetectionScreen({ navigation, route }: any) {
   const [countdown, setCountdown] = useState(10);
   const [cancelled, setCancelled] = useState(false);
-  const [sensitivity, setSensitivity] = useState<CrashSensitivity>('medium');
   const [impactForce, setImpactForce] = useState(0);
-  const [isSending, setIsSending] = useState(false);
-  const [crashDetected, setCrashDetected] = useState(false);
   const [severity, setSeverity] = useState<CrashSeverity>('LOW');
+  const [crashDetected, setCrashDetected] = useState(false);
+  const [countdownStarted, setCountdownStarted] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+
+  const sensitivity: CrashSensitivity =
+    route?.params?.crashSensitivity || 'medium';
 
   const animatedCountdown = useRef(new Animated.Value(1)).current;
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
-  const impactInterval = useRef<NodeJS.Timeout | null>(null);
+  const stillnessTimer = useRef<NodeJS.Timeout | null>(null);
+  const lastMovement = useRef(Date.now());
   const alreadySent = useRef(false);
+  const sensorSubscription = useRef<any>(null);
 
-  // 🔹 Determine severity
-  const determineSeverity = (gForce: number): CrashSeverity => {
-    if (gForce >= 40) return 'CRITICAL';
-    if (gForce >= 30) return 'SEVERE';
-    if (gForce >= 20) return 'MODERATE';
+  const calculateGForce = (x: number, y: number, z: number) =>
+    Math.sqrt(x * x + y * y + z * z) / 9.81;
+
+  const determineSeverity = (g: number): CrashSeverity => {
+    if (g >= 4) return 'CRITICAL';
+    if (g >= 3.5) return 'SEVERE';
+    if (g >= 2.5) return 'MODERATE';
     return 'LOW';
   };
 
-  // 🔹 Load sensitivity safely
+  // 📡 SENSOR
   useEffect(() => {
-    const loadSensitivity = async () => {
-      try {
-        if (route?.params?.crashSensitivity) {
-          setSensitivity(route.params.crashSensitivity);
-          return;
+    setUpdateIntervalForType(SensorTypes.accelerometer, 100);
+
+    sensorSubscription.current = accelerometer
+      .pipe(
+        map(({ x, y, z }) => calculateGForce(x, y, z)),
+        filter(g => g > 0)
+      )
+      .subscribe(gForce => {
+        setImpactForce(gForce);
+
+        // movement tracking
+        if (gForce > STILLNESS_THRESHOLD) {
+          lastMovement.current = Date.now();
         }
 
-        const stored = await AsyncStorage.getItem('@settings_crash_sensitivity');
+        // crash trigger
+        if (!crashDetected && gForce >= CRASH_THRESHOLDS[sensitivity]) {
+          const crashSeverity = determineSeverity(gForce);
+          setSeverity(crashSeverity);
+          setCrashDetected(true);
 
-        if (stored === 'low' || stored === 'medium' || stored === 'high') {
-          setSensitivity(stored);
+          // Immediately start countdown if impact is MODERATE or higher
+          if (crashSeverity !== 'LOW') {
+            setCountdownStarted(true);
+            setCountdown(10);
+          }
+
+          // Stillness check can be optional, comment out if not needed
+          // stillnessTimer.current = setTimeout(() => {
+          //   const now = Date.now();
+          //   if (now - lastMovement.current >= STILLNESS_TIME) {
+          //     // impact detected and countdown started
+          //   } else {
+          //     // false alarm
+          //     setCrashDetected(false);
+          //   }
+          // }, STILLNESS_TIME);
         }
-      } catch (e) {
-        console.log('Sensitivity load error:', e);
-      }
-    };
-
-    loadSensitivity();
-  }, [route?.params?.crashSensitivity]);
-
-  // 🔹 Simulated impact (temporary)
-  useEffect(() => {
-    impactInterval.current = setInterval(() => {
-      const simulatedImpact = Math.random() * 45;
-      setImpactForce(simulatedImpact);
-    }, 1500);
+      });
 
     return () => {
-      if (impactInterval.current) clearInterval(impactInterval.current);
+      sensorSubscription.current?.unsubscribe();
+      if (stillnessTimer.current) clearTimeout(stillnessTimer.current);
     };
-  }, []);
+  }, [crashDetected, sensitivity]);
 
-  // 🔹 Detect crash
+  // ⏱ COUNTDOWN
   useEffect(() => {
-    if (!crashDetected && impactForce >= CRASH_THRESHOLDS[sensitivity]) {
-      const crashSeverity = determineSeverity(impactForce);
-      setSeverity(crashSeverity);
-      setCrashDetected(true);
-      setCountdown(10);
-    }
-  }, [impactForce, sensitivity, crashDetected]);
-
-  // 🔹 Countdown animation
-  useEffect(() => {
-    if (!crashDetected || countdown <= 0 || cancelled) return;
+    if (!countdownStarted || countdown <= 0 || cancelled) return;
 
     Animated.timing(animatedCountdown, {
       toValue: 0,
@@ -108,110 +123,82 @@ const CrashDetectionScreen: React.FC<Props> = ({ navigation, route }) => {
       setCountdown(prev => prev - 1);
     }, 1000);
 
+    // kapag umabot na sa zero at hindi naka-cancel, magse-send
+    if (countdown - 1 === 0) {
+      if (!cancelled && !alreadySent.current) {
+        alreadySent.current = true;
+        handleCrashDetected();
+      }
+    }
+
     return () => {
       if (countdownTimer.current) clearTimeout(countdownTimer.current);
     };
-  }, [countdown, crashDetected, cancelled]);
+  }, [countdown, countdownStarted, cancelled]);
 
-  // 🔹 Auto send once
-  useEffect(() => {
-    if (crashDetected && countdown <= 0 && !cancelled && !alreadySent.current) {
-      alreadySent.current = true;
-      handleCrashDetected();
-    }
-  }, [countdown, crashDetected, cancelled]);
-
-  // 🔹 Send crash to backend
   const handleCrashDetected = async () => {
-    setIsSending(true);
-
-    try {
-      const token = await AsyncStorage.getItem('token');
-
-      if (!token) {
-        Alert.alert('Auth Error', 'Please login again.');
-        setIsSending(false);
-        return;
-      }
-
-      const location = await getCurrentLocation();
-
-      if (!location) {
-        Alert.alert('Error', 'Location not available');
-        setIsSending(false);
-        return;
-      }
-
-      const batteryLevel = await DeviceInfo.getBatteryLevel();
-      const batteryPercent = Math.round(batteryLevel * 100);
-
-      const netState = await NetInfo.fetch();
-      const networkType = netState.type ?? 'unknown';
-
-      const crashData = {
-        latitude: location.latitude,
-        longitude: location.longitude,
-        impact_force: Number(impactForce.toFixed(2)),
-        device_battery: batteryPercent,
-        network_type: networkType,
-      };
-
-      console.log('🚨 CRASH PAYLOAD:', crashData);
-
-      const response = await fetch(
-        'https://rescuelink-backend-j0gz.onrender.com/api/v1/crash',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(crashData),
-        }
-      );
-
-      const text = await response.text();
-      console.log('📡 RAW RESPONSE:', text);
-
-      let data: any = {};
-      try {
-        data = JSON.parse(text);
-      } catch {}
-
-      if (response.ok) {
-        Alert.alert('Success', data.message || 'Crash event recorded');
-      } else {
-        Alert.alert(
-          'Error',
-          data.message || `Server error (${response.status})`
-        );
-      }
-    } catch (error) {
-      console.log('❌ Crash send error:', error);
-      Alert.alert('Error', 'Unable to send crash alert.');
-    } finally {
-      setIsSending(false);
+  setIsSending(true);
+  try {
+    const token = await AsyncStorage.getItem('token');
+    if (!token) {
+      Alert.alert('Auth Error', 'Please login again.');
+      return;
     }
-  };
 
-  // 🔹 Get GPS location
-  const getCurrentLocation = (): Promise<
-    { latitude: number; longitude: number } | null
-  > => {
-    return new Promise(resolve => {
+    const location = await getCurrentLocation();
+    if (!location) {
+      Alert.alert('Error', 'Location not available');
+      return;
+    }
+
+    const batteryLevel = await DeviceInfo.getBatteryLevel();
+    const batteryPercent = Math.round(batteryLevel * 100);
+    const netState = await NetInfo.fetch();
+
+    const crashData = {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      impact_force: Number(impactForce.toFixed(2)),
+      device_battery: batteryPercent,
+      network_type: netState.type ?? 'unknown',
+    };
+
+    const response = await fetch(
+      'https://rescuelink-backend-j0gz.onrender.com/api/v1/crash',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(crashData),
+      }
+    );
+
+    const data = await response.json();
+
+    if (response.ok) {
+  Alert.alert('Success', 'Crash report sent successfully', [
+    { text: 'OK', onPress: () => navigation.navigate('MainTabs') },
+  ]);
+} else {
+      Alert.alert('Error', data.message || 'Failed to send crash');
+    }
+  } catch (e) {
+    Alert.alert('Error', 'Unable to send crash alert.');
+  } finally {
+    setIsSending(false);
+  }
+};
+
+  const getCurrentLocation = () =>
+    new Promise<{ latitude: number; longitude: number } | null>(resolve => {
       Geolocation.getCurrentPosition(
-        position => {
-          const { latitude, longitude } = position.coords;
-          resolve({ latitude, longitude });
-        },
-        error => {
-          console.log('Geolocation error:', error);
-          resolve(null);
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+        pos => resolve(pos.coords),
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 15000 }
       );
     });
-  };
 
   const handleCancel = () => {
     setCancelled(true);
@@ -231,14 +218,14 @@ const CrashDetectionScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   };
 
-  // 🔴 Cancelled screen
+  // Render always returns a valid component
   if (cancelled) {
     return (
-      <View style={styles.cancelledContainer}>
+      <View style={styles.center}>
         <Icon name="x-circle" size={96} color="#E53E3E" />
-        <Text style={styles.cancelledTitle}>Alert Cancelled</Text>
-        <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Text style={styles.backButtonText}>Back to Home</Text>
+        <Text style={styles.title}>Alert Cancelled</Text>
+        <Pressable style={styles.button} onPress={() => navigation.goBack()}>
+          <Text style={styles.buttonText}>Back</Text>
         </Pressable>
       </View>
     );
@@ -246,131 +233,88 @@ const CrashDetectionScreen: React.FC<Props> = ({ navigation, route }) => {
 
   return (
     <View style={styles.container}>
-      <View style={styles.iconCircle}>
-        <Icon name="alert-triangle" size={96} color={getSeverityColor()} />
-      </View>
+      <Icon name="alert-triangle" size={96} color={getSeverityColor()} />
+      <Text style={styles.title}>Hit Impact</Text>
 
-      <Text style={styles.title}>Crash Detected!</Text>
+      <Text style={styles.impact}>G-Force: {impactForce.toFixed(2)}G</Text>
 
-      <Text style={[styles.impact, { color: getSeverityColor() }]}>
-        Impact Force: {impactForce.toFixed(2)} G
+      <Text style={[styles.severity, { color: getSeverityColor() }]}>
+        {severity}
       </Text>
 
-      <Text style={[styles.severityText, { color: getSeverityColor() }]}>
-        Severity: {severity}
-      </Text>
+      {countdownStarted && (
+        <>
+          <Animated.View
+            style={[
+              styles.countdownCircle,
+              { transform: [{ scale: animatedCountdown }] },
+            ]}
+          >
+            <Text style={styles.countdownText}>{countdown}</Text>
+          </Animated.View>
 
-      <Animated.View
-        style={[
-          styles.countdownCircle,
-          { transform: [{ scale: animatedCountdown }] },
-        ]}
-      >
-        <Text style={styles.countdownText}>{countdown}</Text>
-      </Animated.View>
-
-      <Pressable
-        style={styles.cancelButton}
-        onPress={handleCancel}
-        disabled={isSending}
-      >
-        <Text style={styles.cancelButtonText}>I'm OK – Cancel Alert</Text>
-      </Pressable>
-
-      {isSending && (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#E53E3E" />
-          <Text style={styles.sendingText}>Sending SOS...</Text>
-        </View>
+          <Pressable style={styles.button} onPress={handleCancel}>
+            <Text style={styles.buttonText}>I'm OK – Cancel</Text>
+          </Pressable>
+        </>
       )}
+
+      {isSending && <ActivityIndicator size="large" color="#E53E3E" />}
     </View>
   );
-};
+}
 
-export default CrashDetectionScreen;
-
+// Add missing styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F7FAFC',
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
     padding: 20,
+    backgroundColor: '#fff',
   },
-  iconCircle: {
-    backgroundColor: '#FED7D7',
-    padding: 24,
-    borderRadius: 120,
-    marginBottom: 20,
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  button: {
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    backgroundColor: '#E53E3E',
+    borderRadius: 8,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
   },
   title: {
-    fontSize: 28,
+    fontSize: 24,
+    marginVertical: 12,
     fontWeight: 'bold',
-    color: '#2D3748',
   },
   impact: {
-    marginTop: 10,
-    fontSize: 18,
-  },
-  severityText: {
     fontSize: 20,
+    marginVertical: 8,
+  },
+  severity: {
+    fontSize: 20,
+    marginVertical: 8,
     fontWeight: 'bold',
-    marginTop: 5,
   },
   countdownCircle: {
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: '#EDF2F7',
-    alignItems: 'center',
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#edf2f7',
     justifyContent: 'center',
+    alignItems: 'center',
     marginVertical: 20,
   },
   countdownText: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#2D3748',
-  },
-  cancelButton: {
-    backgroundColor: '#4299E1',
-    paddingVertical: 16,
-    paddingHorizontal: 40,
-    borderRadius: 24,
-  },
-  cancelButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  loadingContainer: {
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  sendingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#718096',
-  },
-  cancelledContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cancelledTitle: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    marginTop: 20,
-  },
-  backButton: {
-    marginTop: 20,
-    paddingVertical: 14,
-    paddingHorizontal: 30,
-    backgroundColor: '#E53E3E',
-    borderRadius: 20,
-  },
-  backButtonText: {
-    color: '#fff',
-    fontSize: 16,
+    fontSize: 36,
     fontWeight: 'bold',
   },
 });

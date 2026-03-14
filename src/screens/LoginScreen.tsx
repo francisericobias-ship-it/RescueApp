@@ -29,16 +29,19 @@ export default function LoginScreen({ navigation, onLogin }: Props) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
 
-  // Optional: Check token in storage to auto-login
+  // Check token and rememberMe preference on start
   useEffect(() => {
     const checkToken = async () => {
-      const token = await AsyncStorage.getItem('token');
-      if (token) {
-        // Optional: verify token validity with API
-        // If valid, navigate directly to main
-        navigation.replace('MainTabs');
-        if (onLogin) onLogin();
+      const remember = await AsyncStorage.getItem('rememberMe');
+      if (remember === 'true') {
+        const token = await AsyncStorage.getItem('token');
+        if (token) {
+          // Optional: verify token validity with API
+          navigation.replace('MainTabs');
+          if (onLogin) onLogin();
+        }
       }
     };
     checkToken();
@@ -85,9 +88,14 @@ export default function LoginScreen({ navigation, onLogin }: Props) {
         return;
       }
 
-      // Save token for future auto-login
-      await AsyncStorage.setItem('token', token);
-      console.log('TOKEN SAVED:', token);
+      // Save token based on "Remember Me"
+      if (rememberMe) {
+        await AsyncStorage.setItem('token', token);
+        await AsyncStorage.setItem('rememberMe', 'true');
+      } else {
+        await AsyncStorage.removeItem('token');
+        await AsyncStorage.setItem('rememberMe', 'false');
+      }
 
       // Notify parent component (e.g., App.tsx) about login
       if (onLogin) onLogin();
@@ -131,6 +139,17 @@ export default function LoginScreen({ navigation, onLogin }: Props) {
           value={password}
           onChangeText={setPassword}
         />
+
+        {/* Remember Me Checkbox */}
+        <View style={styles.rememberMeContainer}>
+          <TouchableOpacity
+            onPress={() => setRememberMe(!rememberMe)}
+            style={styles.checkbox}
+          >
+            {rememberMe && <View style={styles.checkedBox} />}
+          </TouchableOpacity>
+          <Text style={styles.rememberMeText}>Remember Me</Text>
+        </View>
 
         <Pressable
           style={[styles.loginButton, loading && { opacity: 0.7 }]}
@@ -237,5 +256,28 @@ const styles = StyleSheet.create({
     color: '#e74c3c',
     fontWeight: 'bold',
     marginLeft: 4,
+  },
+  rememberMeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  checkedBox: {
+    width: 14,
+    height: 14,
+    backgroundColor: '#e74c3c',
+  },
+  rememberMeText: {
+    fontSize: 14,
+    color: '#111827',
   },
 });

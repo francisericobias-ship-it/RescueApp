@@ -8,6 +8,7 @@ import {
   Alert,
   Platform,
   View,
+  ActivityIndicator,
 } from 'react-native';
 import axios from 'axios';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -26,6 +27,7 @@ export default function SignUpScreen({ navigation }) {
   const [birthDate, setBirthDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [loading, setLoading] = useState(false);
+
   const role = 'admin';
 
   const formatDate = (date: Date) => date.toISOString().split('T')[0];
@@ -40,14 +42,17 @@ export default function SignUpScreen({ navigation }) {
       !firstName || !lastName || !middleName || !userPhoneNumber ||
       !email || !username || !password || !passwordConfirmation || !relativeNumber
     ) {
-      Alert.alert('Error', 'Please fill all required fields');
+      Alert.alert('Missing Fields', 'Please fill all required fields');
       return;
     }
+
     if (password !== passwordConfirmation) {
-      Alert.alert('Error', 'Passwords do not match');
+      Alert.alert('Password Error', 'Passwords do not match');
       return;
     }
+
     setLoading(true);
+
     try {
       const res = await axios.post(
         'https://rescuelink-backend-j0gz.onrender.com/api/v1/auth/register',
@@ -66,10 +71,12 @@ export default function SignUpScreen({ navigation }) {
           relative_number: relativeNumber,
         }
       );
-      Alert.alert('Success', res.data.message || 'User registered');
+
+      Alert.alert('Success', res.data.message || 'Account created!');
       navigation.navigate('Login');
+
     } catch (err: any) {
-      Alert.alert('Error', err.response?.data?.message || 'Network/server error');
+      Alert.alert('Error', err.response?.data?.message || 'Network error');
     } finally {
       setLoading(false);
     }
@@ -81,78 +88,166 @@ export default function SignUpScreen({ navigation }) {
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
-      <Text style={styles.title}>Create Your RescueLink Account</Text>
+      <Text style={styles.title}>Create Account</Text>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Personal Info</Text>
-        <TextInput style={styles.input} placeholder="First Name" value={firstName} onChangeText={setFirstName} />
-        <TextInput style={styles.input} placeholder="Last Name" value={lastName} onChangeText={setLastName} />
-        <TextInput style={styles.input} placeholder="Middle Name" value={middleName} onChangeText={setMiddleName} />
-        <TextInput style={styles.input} placeholder="Ext Name (Optional)" value={extName} onChangeText={setExtName} />
-        <TouchableOpacity style={styles.input} onPress={() => setShowDatePicker(true)}>
-          <Text>Birth Date: {formatDate(birthDate)}</Text>
-        </TouchableOpacity>
-        {showDatePicker && (
-          <DateTimePicker
-            value={birthDate}
-            mode="date"
-            display="default"
-            maximumDate={new Date()}
-            onChange={onChangeDate}
-          />
-        )}
-        <TextInput style={styles.input} placeholder="Phone Number" keyboardType="phone-pad" value={userPhoneNumber} onChangeText={setUserPhoneNumber} />
-      </View>
+      {/* PERSONAL INFO */}
+      <Text style={styles.sectionTitle}>Personal Info</Text>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Account Info</Text>
-        <TextInput style={styles.input} placeholder="Email" keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
-        <TextInput style={styles.input} placeholder="Username" autoCapitalize="none" value={username} onChangeText={setUsername} />
-        <TextInput style={styles.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} />
-        <TextInput style={styles.input} placeholder="Confirm Password" secureTextEntry value={passwordConfirmation} onChangeText={setPasswordConfirmation} />
-      </View>
+      <TextInput style={styles.input} placeholder="First Name" value={firstName} onChangeText={setFirstName} />
+      <TextInput style={styles.input} placeholder="Last Name" value={lastName} onChangeText={setLastName} />
+      <TextInput style={styles.input} placeholder="Middle Name" value={middleName} onChangeText={setMiddleName} />
+      <TextInput style={styles.input} placeholder="Ext Name (Optional)" value={extName} onChangeText={setExtName} />
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Emergency Contact</Text>
-        <TextInput style={styles.input} placeholder="Relative Number" keyboardType="phone-pad" value={relativeNumber} onChangeText={setRelativeNumber} />
-      </View>
+      <TouchableOpacity style={styles.input} onPress={() => setShowDatePicker(true)}>
+        <Text style={styles.dateText}>Birth Date: {formatDate(birthDate)}</Text>
+      </TouchableOpacity>
 
+      {showDatePicker && (
+        <DateTimePicker
+          value={birthDate}
+          mode="date"
+          display="default"
+          maximumDate={new Date()}
+          onChange={onChangeDate}
+        />
+      )}
+
+      <TextInput
+        style={styles.input}
+        placeholder="Phone Number"
+        keyboardType="phone-pad"
+        value={userPhoneNumber}
+        onChangeText={setUserPhoneNumber}
+      />
+
+      {/* ACCOUNT INFO */}
+      <Text style={styles.sectionTitle}>Account Info</Text>
+
+      <TextInput style={styles.input} placeholder="Email" keyboardType="email-address" value={email} onChangeText={setEmail} />
+      <TextInput style={styles.input} placeholder="Username" value={username} onChangeText={setUsername} />
+      <TextInput style={styles.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} />
+      <TextInput style={styles.input} placeholder="Confirm Password" secureTextEntry value={passwordConfirmation} onChangeText={setPasswordConfirmation} />
+
+      {/* EMERGENCY CONTACT */}
+      <Text style={styles.sectionTitle}>Emergency Contact</Text>
+
+      <TextInput
+        style={styles.input}
+        placeholder="Relative Number"
+        keyboardType="phone-pad"
+        value={relativeNumber}
+        onChangeText={setRelativeNumber}
+      />
+
+      {/* SIGN UP BUTTON */}
       <TouchableOpacity
-        style={[styles.signupButton, loading && styles.disabledButton]}
+        style={styles.button}
         onPress={handleSignUp}
         disabled={loading}
       >
-        <Text style={styles.signupText}>{loading ? 'Creating Account...' : 'Sign Up'}</Text>
+        {loading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Sign Up</Text>
+        )}
       </TouchableOpacity>
+
+      {/* 🔥 SEPARATED LOGIN BUTTON */}
+      <View style={styles.loginContainer}>
+        <Text style={styles.loginLabel}>Already have an account?</Text>
+
+        <TouchableOpacity
+          style={styles.loginButton}
+          onPress={() => navigation.navigate('Login')}
+        >
+          <Text style={styles.loginButtonText}>Login</Text>
+        </TouchableOpacity>
+      </View>
+
     </ScrollView>
   );
 }
 
+/* ---------------- STYLES ---------------- */
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff', paddingHorizontal: 20 },
-  content: { paddingVertical: 40 },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 30, textAlign: 'center' },
-  section: { marginBottom: 25 },
-  sectionTitle: { fontSize: 18, color: '#e74c3c', marginBottom: 10, fontWeight: '600' },
-  input: {
-    width: '100%',
-    height: 50,
-    backgroundColor: '#ffffff',
-    borderRadius: 10,
-    paddingHorizontal: 15,
-    marginBottom: 15,
-    justifyContent: 'center',
-    color: '#fff',
+  container: {
+    flex: 1,
+    backgroundColor: '#F9FAFB',
+    paddingHorizontal: 20,
   },
-  signupButton: {
-    width: '100%',
-    height: 50,
-    backgroundColor: '#e74c3c',
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
+
+  content: {
+    paddingVertical: 40,
+  },
+
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#111827',
+    marginBottom: 30,
+    textAlign: 'center',
+  },
+
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#e74c3c',
+    marginBottom: 10,
     marginTop: 10,
   },
-  disabledButton: { backgroundColor: '#999' },
-  signupText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+
+  input: {
+    height: 50,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingHorizontal: 15,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+
+  dateText: {
+    color: '#111827',
+  },
+
+  button: {
+    height: 55,
+    backgroundColor: '#e74c3c',
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 15,
+  },
+
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+
+  /* 🔥 LOGIN SECTION */
+  loginContainer: {
+    marginTop: 25,
+    alignItems: 'center',
+  },
+
+  loginLabel: {
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+
+  loginButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 25,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#e74c3c',
+  },
+
+  loginButtonText: {
+    color: '#e74c3c',
+    fontWeight: 'bold',
+    fontSize: 15,
+  },
 });

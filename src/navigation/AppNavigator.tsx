@@ -23,52 +23,47 @@ interface AppNavigatorProps {
   initialRouteName: keyof RootStackParamList;
 }
 
-const screenOptions = {
-  headerStyle: { backgroundColor: '#111827' },
-  headerTintColor: '#fff',
-  headerTitleStyle: { fontWeight: 'bold' as const },
-};
-
 export default function AppNavigator({ initialRouteName }: AppNavigatorProps) {
   return (
     <SafeAreaProvider>
       <NavigationContainer>
         <Stack.Navigator
           initialRouteName={initialRouteName}
-          screenOptions={screenOptions}
+          screenOptions={{
+            headerShown: false, // 🔥 REMOVE ALL HEADERS
+            animation: 'slide_from_right', // optional: smoother transition
+          }}
         >
-          {/* 🔥 Onboarding (First Launch Only) */}
+
+          {/* Onboarding */}
           <Stack.Screen
             name="Onboarding"
             component={OnboardingScreen}
-            options={{ headerShown: false }}
           />
 
-          {/* Authentication screens */}
+          {/* Auth */}
           <Stack.Screen
             name="Login"
             component={LoginScreen}
-            options={{ title: 'Login' }}
           />
+
           <Stack.Screen
             name="SignUp"
             component={SignUpScreen}
-            options={{ title: 'Sign Up' }}
           />
 
-          {/* Main app */}
+          {/* Main App */}
           <Stack.Screen
             name="MainTabs"
             component={BottomTabNavigator}
-            options={{ headerShown: false }}
           />
 
-          {/* Feature screens */}
+          {/* Crash Detection */}
           <Stack.Screen
             name="CrashDetection"
             component={CrashDetectionScreen}
-            options={{ title: 'Crash Detection' }}
           />
+
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

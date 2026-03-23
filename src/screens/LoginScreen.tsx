@@ -9,9 +9,9 @@ import {
   Platform,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
@@ -22,7 +22,7 @@ type LoginScreenNavigationProp = NativeStackNavigationProp<
 
 interface Props {
   navigation: LoginScreenNavigationProp;
-  onLogin?: () => void; // callback to notify parent of login
+  onLogin?: () => void;
 }
 
 export default function LoginScreen({ navigation, onLogin }: Props) {
@@ -31,20 +31,24 @@ export default function LoginScreen({ navigation, onLogin }: Props) {
   const [loading, setLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
 
-  // Check token and rememberMe preference on start
   useEffect(() => {
-    const checkToken = async () => {
-      const remember = await AsyncStorage.getItem('rememberMe');
-      if (remember === 'true') {
+    const loadRemember = async () => {
+      try {
+        const remember = await AsyncStorage.getItem('rememberMe');
         const token = await AsyncStorage.getItem('token');
-        if (token) {
-          // Optional: verify token validity with API
+
+        if (remember === 'true') setRememberMe(true);
+
+        if (remember === 'true' && token) {
           navigation.replace('MainTabs');
           if (onLogin) onLogin();
         }
+      } catch (e) {
+        console.log('Error loading Remember Me:', e);
       }
     };
-    checkToken();
+
+    loadRemember();
   }, []);
 
   const handleLogin = async () => {
@@ -72,39 +76,27 @@ export default function LoginScreen({ navigation, onLogin }: Props) {
 
       const data = await response.json();
 
-      console.log('LOGIN STATUS:', response.status);
-      console.log('LOGIN DATA:', data);
-
       if (!response.ok) {
-        const message = data.message || 'Invalid email or password';
-        Alert.alert('Login Failed', message);
+        Alert.alert('Login Failed', data.message || 'Invalid credentials');
         return;
       }
 
       const token = data.access_token;
 
       if (!token) {
-        Alert.alert('Error', 'No token received from server');
+        Alert.alert('Error', 'No token received');
         return;
       }
 
-      // Save token based on "Remember Me"
-      if (rememberMe) {
-        await AsyncStorage.setItem('token', token);
-        await AsyncStorage.setItem('rememberMe', 'true');
-      } else {
-        await AsyncStorage.removeItem('token');
-        await AsyncStorage.setItem('rememberMe', 'false');
-      }
+      await AsyncStorage.setItem('token', token);
+      await AsyncStorage.setItem('rememberMe', rememberMe ? 'true' : 'false');
 
-      // Notify parent component (e.g., App.tsx) about login
       if (onLogin) onLogin();
 
-      // Navigate to main app
       navigation.replace('MainTabs');
     } catch (error) {
       console.log('LOGIN ERROR:', error);
-      Alert.alert('Error', 'Network error. Please try again.');
+      Alert.alert('Error', 'Network error');
     } finally {
       setLoading(false);
     }
@@ -115,32 +107,37 @@ export default function LoginScreen({ navigation, onLogin }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={styles.container}
     >
-      {/* Header */}
+      {/* HEADER */}
       <View style={styles.header}>
         <Text style={styles.title}>RescueLink</Text>
         <Text style={styles.subtitle}>Login to your account</Text>
       </View>
 
-      {/* Form */}
+      {/* FORM */}
       <View style={styles.form}>
+
+        {/* EMAIL */}
         <TextInput
           style={styles.input}
           placeholder="Email"
+          placeholderTextColor="#9CA3AF"
           keyboardType="email-address"
           autoCapitalize="none"
           value={email}
           onChangeText={setEmail}
         />
 
+        {/* PASSWORD */}
         <TextInput
           style={styles.input}
           placeholder="Password"
+          placeholderTextColor="#9CA3AF"
           secureTextEntry
           value={password}
           onChangeText={setPassword}
         />
 
-        {/* Remember Me Checkbox */}
+        {/* REMEMBER ME */}
         <View style={styles.rememberMeContainer}>
           <TouchableOpacity
             onPress={() => setRememberMe(!rememberMe)}
@@ -151,34 +148,46 @@ export default function LoginScreen({ navigation, onLogin }: Props) {
           <Text style={styles.rememberMeText}>Remember Me</Text>
         </View>
 
+        {/* LOGIN BUTTON */}
         <Pressable
           style={[styles.loginButton, loading && { opacity: 0.7 }]}
           onPress={handleLogin}
           disabled={loading}
         >
-          <Text style={styles.loginButtonText}>
-            {loading ? 'Logging in...' : 'Login'}
-          </Text>
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.loginButtonText}>Login</Text>
+          )}
         </Pressable>
 
+        {/* FORGOT PASSWORD */}
         <TouchableOpacity
           style={styles.forgotButton}
           onPress={() => Alert.alert('Info', 'Reset password coming soon')}
         >
           <Text style={styles.forgotText}>Forgot Password?</Text>
         </TouchableOpacity>
+
       </View>
 
-      {/* Footer */}
+      {/* FOOTER */}
       <View style={styles.footer}>
-        <Text style={styles.footerText}>Don’t have an account? </Text>
-        <Pressable onPress={() => navigation.navigate('SignUp')}>
-          <Text style={styles.signupText}>Sign Up</Text>
-        </Pressable>
+        <Text style={styles.footerText}>Don’t have an account?</Text>
+
+        <TouchableOpacity
+          style={styles.signupButton}
+          onPress={() => navigation.navigate('SignUp')}
+        >
+          <Text style={styles.signupButtonText}>Sign Up</Text>
+        </TouchableOpacity>
       </View>
+
     </KeyboardAvoidingView>
   );
 }
+
+/* ---------------- STYLES ---------------- */
 
 const styles = StyleSheet.create({
   container: {
@@ -187,95 +196,112 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
+
   header: {
     marginBottom: 40,
     alignItems: 'center',
   },
+
   title: {
     fontSize: 36,
     fontWeight: 'bold',
     color: '#e74c3c',
   },
+
   subtitle: {
     fontSize: 16,
-    color: '#666',
+    color: '#6B7280',
     marginTop: 8,
   },
+
   form: {
     backgroundColor: '#fff',
     borderRadius: 24,
     padding: 24,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 10,
-    elevation: 3,
+    elevation: 4,
   },
+
+  /* 🔥 BORDERLESS INPUT */
   input: {
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 14,
     paddingVertical: 14,
-    paddingHorizontal: 20,
-    marginBottom: 16,
+    paddingHorizontal: 16,
+    marginBottom: 14,
     fontSize: 16,
     color: '#111827',
   },
+
   loginButton: {
     backgroundColor: '#e74c3c',
     paddingVertical: 16,
     borderRadius: 16,
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 10,
   },
+
   loginButtonText: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
   },
+
   forgotButton: {
     marginTop: 12,
     alignItems: 'center',
   },
+
   forgotText: {
-    color: '#111827',
+    color: '#6B7280',
     fontSize: 14,
-    textDecorationLine: 'underline',
   },
+
   footer: {
-    marginTop: 24,
-    flexDirection: 'row',
-    justifyContent: 'center',
+    marginTop: 30,
     alignItems: 'center',
   },
+
   footerText: {
-    color: '#666',
-    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: 8,
   },
-  signupText: {
+
+  signupButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 30,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#e74c3c',
+  },
+
+  signupButtonText: {
     color: '#e74c3c',
     fontWeight: 'bold',
-    marginLeft: 4,
   },
+
   rememberMeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 10,
   },
+
   checkbox: {
     width: 20,
     height: 20,
-    borderWidth: 1,
-    borderColor: '#ccc',
+    borderRadius: 5,
+    backgroundColor: '#E5E7EB',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 8,
   },
+
   checkedBox: {
-    width: 14,
-    height: 14,
+    width: 12,
+    height: 12,
     backgroundColor: '#e74c3c',
+    borderRadius: 3,
   },
+
   rememberMeText: {
     fontSize: 14,
     color: '#111827',

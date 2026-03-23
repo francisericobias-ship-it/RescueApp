@@ -9,31 +9,21 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/Feather';
-
-export type HistoryItem = {
-  id: string;
-  type: 'SOS' | 'DrivingMode' | 'Crash';
-  description: string;
-  speed?: number;
-  latitude?: number;
-  longitude?: number;
-  timestamp: number;
-};
-
-const STORAGE_KEY = '@history';
+import {
+  getHistoryEvents,
+  clearHistory as clearHistoryStorage,
+  HistoryEvent,
+} from '../services/historyStorage';
 
 export default function HistoryScreen() {
-  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [history, setHistory] = useState<HistoryEvent[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Load history from AsyncStorage
+  // Load history from storage
   const loadHistory = async () => {
     try {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      const data: HistoryItem[] = stored ? JSON.parse(stored) : [];
-      // Sort descending by timestamp
+      const data = await getHistoryEvents();
       data.sort((a, b) => b.timestamp - a.timestamp);
       setHistory(data);
     } catch (error) {
@@ -42,7 +32,7 @@ export default function HistoryScreen() {
     }
   };
 
-  // Auto-refresh when screen is focused
+  // Refresh when screen is focused
   useFocusEffect(
     useCallback(() => {
       loadHistory();
@@ -68,7 +58,7 @@ export default function HistoryScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await AsyncStorage.removeItem(STORAGE_KEY);
+              await clearHistoryStorage();
               setHistory([]);
             } catch (error) {
               Alert.alert('Error', 'Failed to clear history');
@@ -79,43 +69,72 @@ export default function HistoryScreen() {
     );
   };
 
+  // Icon depending on event type
+  const getIcon = (type: string) => {
+    switch (type) {
+      case 'SOS':
+        return { name: 'alert-circle', color: '#e74c3c' };
+      case 'CRASH':
+        return { name: 'alert-triangle', color: '#f39c12' };
+      case 'DRIVING_ON':
+        return { name: 'navigation', color: '#2ecc71' };
+      case 'DRIVING_OFF':
+        return { name: 'square', color: '#95a5a6' };
+      case 'ADMIN_ACCEPTED':
+        return { name: 'check-circle', color: '#27ae60' };
+      default:
+        return { name: 'info', color: '#4C6EF5' };
+    }
+  };
+
   // Render each item
-  const renderItem = ({ item }: { item: HistoryItem }) => (
-    <View style={styles.item}>
-      <View style={styles.itemHeader}>
-        <Icon
-          name={
-            item.type === 'SOS'
-              ? 'alert-circle'
-              : item.type === 'Crash'
-              ? 'alert-triangle'
-              : 'drive'
-          }
-          size={20}
-          color="#4C6EF5"
-          style={{ marginRight: 8 }}
-        />
-        <Text style={styles.typeText}>{`[${item.type}] ${item.description}`}</Text>
-      </View>
-      {item.speed !== undefined && (
-        <Text style={styles.detail}>Speed: {item.speed} km/h</Text>
-      )}
-      {item.latitude !== undefined && item.longitude !== undefined && (
-        <Text style={styles.detail}>
-          Location: {item.latitude.toFixed(5)}, {item.longitude.toFixed(5)}
+  const renderItem = ({ item }: { item: HistoryEvent }) => {
+    const icon = getIcon(item.type);
+
+    return (
+      <View style={styles.item}>
+        <View style={styles.itemHeader}>
+          <Icon
+            name={icon.name}
+            size={20}
+            color={icon.color}
+            style={{ marginRight: 8 }}
+          />
+          <Text style={styles.typeText}>
+            [{item.type}] {item.description || '-'}
+          </Text>
+        </View>
+
+        {item.speed !== undefined && (
+          <Text style={styles.detail}>Speed: {item.speed} km/h</Text>
+        )}
+
+        {item.latitude !== undefined && item.longitude !== undefined && (
+          <Text style={styles.detail}>
+            Location: {item.latitude.toFixed(5)}, {item.longitude.toFixed(5)}
+          </Text>
+        )}
+
+        <Text style={styles.date}>
+          {new Date(item.timestamp).toLocaleString()}
         </Text>
-      )}
-      <Text style={styles.date}>{new Date(item.timestamp).toLocaleString()}</Text>
-    </View>
-  );
+      </View>
+    );
+  };
 
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerText}>History</Text>
+
         <TouchableOpacity style={styles.clearButton} onPress={clearHistory}>
-          <Icon name="trash-2" size={16} color="#e74c3c" style={{ marginRight: 6 }} />
+          <Icon
+            name="trash-2"
+            size={16}
+            color="#e74c3c"
+            style={{ marginRight: 6 }}
+          />
           <Text style={styles.clearButtonText}>Clear All</Text>
         </TouchableOpacity>
       </View>
@@ -142,7 +161,12 @@ export default function HistoryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9FAFB', padding: 16 },
+  container: {
+    flex: 1,
+    backgroundColor: '#F9FAFB',
+    padding: 16,
+  },
+
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -150,7 +174,13 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingHorizontal: 8,
   },
-  headerText: { fontSize: 24, fontWeight: 'bold', color: '#111827' },
+
+  headerText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+
   clearButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -164,7 +194,12 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
-  clearButtonText: { color: '#e74c3c', fontWeight: '600', fontSize: 14 },
+
+  clearButtonText: {
+    color: '#e74c3c',
+    fontWeight: '600',
+    fontSize: 14,
+  },
 
   item: {
     backgroundColor: '#fff',
@@ -177,10 +212,35 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  itemHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  typeText: { fontSize: 16, fontWeight: 'bold', color: '#111827' },
-  detail: { fontSize: 14, color: '#666', marginBottom: 2 },
-  date: { fontSize: 12, color: '#999', marginTop: 4 },
 
-  emptyText: { textAlign: 'center', color: '#999', marginTop: 50, fontSize: 16 },
+  itemHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+
+  typeText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+
+  detail: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 2,
+  },
+
+  date: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 4,
+  },
+
+  emptyText: {
+    textAlign: 'center',
+    color: '#999',
+    marginTop: 50,
+    fontSize: 16,
+  },
 });

@@ -26,9 +26,10 @@ import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { accelerometer, setUpdateIntervalForType, SensorTypes } from 'react-native-sensors';
 import { map } from 'rxjs/operators';
+import { saveHistoryEvent } from '../services/historyStorage';
 
 import { playSOSSound, playCrashSound, playDrivingSound } from '../services/soundService';
-import { startMeshScan, broadcastSOS, stopMeshScan } from '../services/bleMeshService';
+import { startMeshScan, stopMeshScan, broadcastMeshPayload } from '../services/bleMeshService';
 import { requestLocationPermission } from '../utils/LocationPermissions';
 import { launchCamera, launchImageLibrary, ImagePickerResponse, Asset } from 'react-native-image-picker';
 
@@ -60,8 +61,42 @@ export default function HomeScreen({ navigation }: any) {
   const watchId = useRef<number | null>(null);
   const autoOffTimer = useRef<NodeJS.Timeout | null>(null);
   const crashSubscription = useRef<any>(null);
-
+  const timeNow = new Date().toLocaleTimeString();
   /* ---------------- NOTIFICATIONS ---------------- */
+  const handlePressIn = () => {
+  Animated.spring(sosScale, {
+    toValue: 0.9,
+    useNativeDriver: true,
+  }).start();
+};
+
+const handlePressOut = () => {
+  Animated.spring(sosScale, {
+    toValue: 1,
+    useNativeDriver: true,
+  }).start();
+};
+
+const startPulse = () => {
+  Animated.loop(
+    Animated.sequence([
+      Animated.timing(sosScale, {
+        toValue: 1.05,
+        duration: 500,
+        useNativeDriver: true,
+      }),
+      Animated.timing(sosScale, {
+        toValue: 0.95,
+        duration: 500,
+        useNativeDriver: true,
+      }),
+    ])
+  ).start();
+};
+
+
+
+
   useFocusEffect(useCallback(() => {
     PushNotification.configure({ onNotification: () => {}, requestPermissions: Platform.OS === 'ios' });
 
@@ -124,6 +159,14 @@ export default function HomeScreen({ navigation }: any) {
       setDrivingMode(true);
       playDrivingSound();
       notify('Driving Mode', 'Activated', speed);
+
+      saveHistoryEvent({
+    id: `${Date.now()}`,
+    type: 'DRIVING_ON',
+    timestamp: Date.now(),
+    speed,
+  });
+
       if (!isOnline) startMeshScan();
     }
 
@@ -131,6 +174,13 @@ export default function HomeScreen({ navigation }: any) {
       autoOffTimer.current = setTimeout(() => {
         setDrivingMode(false);
         notify('Driving Mode', 'Deactivated');
+
+        saveHistoryEvent({
+  id: `${Date.now()}`,
+  type: 'DRIVING_OFF',
+  timestamp: Date.now(),
+  speed,
+});
         autoOffTimer.current = null;
       }, AUTO_OFF_DELAY);
     }
@@ -154,12 +204,21 @@ export default function HomeScreen({ navigation }: any) {
 
       playCrashSound();
 
+      /* 🔥 ADD THIS */
+saveHistoryEvent({
+  id: `${Date.now()}`,
+  type: 'CRASH',
+  timestamp: Date.now(),
+  speed,
+  description: `Impact force: ${gForce.toFixed(2)}G`,
+});
+
       const payload = { type: 'CRASH', impactForce: gForce, timestamp: Date.now() };
 
       if (isOnline) {
         navigation.navigate('CrashDetection', { impactForce: gForce });
       } else {
-        broadcastSOS(payload);
+        broadcastMeshPayload(payload);
         Alert.alert('Offline Mode', 'SOS sent via nearby devices');
       }
     });
@@ -206,59 +265,92 @@ export default function HomeScreen({ navigation }: any) {
 
   /* ---------------- SOS ---------------- */
   const handleSOS = async () => {
-    if (!title || !description) return Alert.alert('Error', 'Fill all fields');
+  if (!title || !description) {
+    return Alert.alert('Error', 'Fill all fields');
+  }
 
-    setSending(true);
+  setSending(true);
 
-    try {
-      const token = await AsyncStorage.getItem('token');
+  try {
+    const token = await AsyncStorage.getItem('token');
 
-      const coords: Coords | null = await new Promise(resolve => {
-        Geolocation.getCurrentPosition(
-          pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-          () => resolve(null)
-        );
-      });
+    const coords = await new Promise(resolve => {
+      Geolocation.getCurrentPosition(
+        pos => resolve({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude
+        }),
+        () => resolve(null)
+      );
+    });
 
-      if (!coords) return Alert.alert('Error', 'Location failed');
+    
 
-      const imageUrl = selectedImage ? await uploadImage() : null;
-
-      const payload = {
-        title,
-        description,
-        latitude: coords.lat,
-        longitude: coords.lng,
-        image: imageUrl,
-        timestamp: Date.now()
-      };
-
-      if (isOnline) {
-        await fetch('https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ ...payload, alert_type: 'accident', severity: 'high' })
-        });
-        Alert.alert('SOS Sent 🚨');
-      } else {
-        broadcastSOS({ type: 'SOS', ...payload });
-        Alert.alert('Offline Mode', 'Broadcast sent');
-      }
-
-      setModalVisible(false);
-      setTitle('');
-      setDescription('');
-      setSelectedImage(null);
-
-    } catch {
-      Alert.alert('Error', 'Failed to send SOS');
-    } finally {
-      setSending(false);
+    if (!coords) {
+      return Alert.alert('Error', 'Location failed');
     }
-  };
+
+    const imageUrl = selectedImage ? await uploadImage() : null;
+
+    const payload = {
+      alert_type: 'accident',
+      severity: 'high',
+      title,
+      description,
+      location: 'User current location', // ✅ REQUIRED
+      latitude: coords.lat,
+      longitude: coords.lng,
+      image_url: imageUrl, // ✅ FIXED
+    };
+
+    const res = await fetch(
+      'https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const data = await res.json();
+
+    console.log("STATUS:", res.status);
+    console.log("RESPONSE:", data);
+
+    if (!res.ok) {
+      throw new Error('Failed request');
+    }
+
+
+    await saveHistoryEvent({
+     id: `${Date.now()}`,
+     type: 'SOS',
+     timestamp: Date.now(),
+     latitude: coords.lat,
+     longitude: coords.lng,
+     description: title,
+});
+
+    Alert.alert(
+  'SOS Sent 🚨',
+  `Your report has been sent successfully.\n\n📍 Location: ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}\n⏰ Time: ${timeNow}`
+);
+
+    setModalVisible(false);
+    setTitle('');
+    setDescription('');
+    setSelectedImage(null);
+
+  } catch (err) {
+    console.log(err);
+    Alert.alert('Error', 'Failed to send SOS');
+  } finally {
+    setSending(false);
+  }
+};
 
   /* ---------------- UI ---------------- */
   return (
@@ -277,13 +369,23 @@ export default function HomeScreen({ navigation }: any) {
         </Text>
       </View>
 
-      <Pressable style={styles.sosButton} delayLongPress={3000} onLongPress={() => {
-        playSOSSound();
-        setModalVisible(true);
-      }}>
-        <Text style={styles.sosText}>SOS</Text>
-        <Text style={styles.sosSub}>Hold 3 seconds</Text>
-      </Pressable>
+      <Pressable
+  delayLongPress={3000}
+  onPressIn={() => {
+    handlePressIn();
+    startPulse(); // optional
+  }}
+  onPressOut={handlePressOut}
+  onLongPress={() => {
+    playSOSSound();
+    setModalVisible(true);
+  }}
+>
+  <Animated.View style={[styles.sosButton, { transform: [{ scale: sosScale }] }]}>
+    <Text style={styles.sosText}>SOS</Text>
+    <Text style={styles.sosSub}>Hold 3 seconds</Text>
+  </Animated.View>
+</Pressable>
 
       <View style={styles.toggle}>
         <Text>Driving Mode</Text>

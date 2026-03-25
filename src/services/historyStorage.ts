@@ -11,27 +11,55 @@ export type HistoryEvent = {
 };
 
 const STORAGE_KEY = '@history';
+const MAX_HISTORY = 100; // 🔥 limit para di bumigat
 
-export async function saveHistoryEvent(event: HistoryEvent) {
+/* ---------------- SAFE PARSE ---------------- */
+const safeParse = (data: string | null): HistoryEvent[] => {
   try {
-    const existing = await getHistoryEvents();
-    const updated = [event, ...existing];
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-  } catch (e) {
-    console.log('Error saving history event:', e);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    console.log('Corrupted history data, resetting...');
+    return [];
   }
-}
+};
 
+/* ---------------- GET ---------------- */
 export async function getHistoryEvents(): Promise<HistoryEvent[]> {
   try {
     const data = await AsyncStorage.getItem(STORAGE_KEY);
-    return data ? JSON.parse(data) : [];
+    const parsed = safeParse(data);
+
+    // 🔥 ensure sorted (latest first)
+    return parsed.sort((a, b) => b.timestamp - a.timestamp);
+
   } catch (e) {
     console.log('Error getting history:', e);
     return [];
   }
 }
 
+/* ---------------- SAVE ---------------- */
+export async function saveHistoryEvent(event: HistoryEvent) {
+  try {
+    const existing = await getHistoryEvents();
+
+    // 🔥 prevent duplicate (same id)
+    const filtered = existing.filter(item => item.id !== event.id);
+
+    const updated = [event, ...filtered].slice(0, MAX_HISTORY);
+
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+
+  } catch (e) {
+    console.log('Error saving history event:', e);
+  }
+}
+
+/* ---------------- CLEAR ---------------- */
 export async function clearHistory() {
-  await AsyncStorage.removeItem(STORAGE_KEY);
+  try {
+    await AsyncStorage.removeItem(STORAGE_KEY);
+  } catch (e) {
+    console.log('Error clearing history:', e);
+  }
 }

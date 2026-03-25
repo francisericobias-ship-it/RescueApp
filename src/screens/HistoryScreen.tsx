@@ -1,12 +1,13 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
   FlatList,
   StyleSheet,
-  TouchableOpacity,
+ TouchableOpacity,
   Alert,
   RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Feather';
@@ -19,48 +20,67 @@ import {
 export default function HistoryScreen() {
   const [history, setHistory] = useState<HistoryEvent[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // Load history from storage
+  const isMounted = useRef(true);
+
+  /* ---------------- LOAD HISTORY ---------------- */
   const loadHistory = async () => {
     try {
+      setLoading(true);
       const data = await getHistoryEvents();
-      data.sort((a, b) => b.timestamp - a.timestamp);
-      setHistory(data);
+
+      const sorted = data.sort((a, b) => b.timestamp - a.timestamp);
+
+      if (isMounted.current) {
+        setHistory(sorted);
+      }
     } catch (error) {
       console.log('Error loading history:', error);
-      setHistory([]);
+      if (isMounted.current) {
+        setHistory([]);
+      }
+    } finally {
+      if (isMounted.current) {
+        setLoading(false);
+      }
     }
   };
 
-  // Refresh when screen is focused
+  /* ---------------- FOCUS ---------------- */
   useFocusEffect(
     useCallback(() => {
+      isMounted.current = true;
       loadHistory();
+
+      return () => {
+        isMounted.current = false;
+      };
     }, [])
   );
 
-  // Pull-to-refresh
+  /* ---------------- REFRESH ---------------- */
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadHistory();
     setRefreshing(false);
   }, []);
 
-  // Clear all history
+  /* ---------------- CLEAR ---------------- */
   const clearHistory = () => {
     Alert.alert(
       'Clear History',
-      'Are you sure you want to delete all history?',
+      'This will permanently delete all records.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Yes, clear',
+          text: 'Delete All',
           style: 'destructive',
           onPress: async () => {
             try {
               await clearHistoryStorage();
               setHistory([]);
-            } catch (error) {
+            } catch {
               Alert.alert('Error', 'Failed to clear history');
             }
           },
@@ -69,7 +89,7 @@ export default function HistoryScreen() {
     );
   };
 
-  // Icon depending on event type
+  /* ---------------- ICON ---------------- */
   const getIcon = (type: string) => {
     switch (type) {
       case 'SOS':
@@ -87,31 +107,30 @@ export default function HistoryScreen() {
     }
   };
 
-  // Render each item
+  /* ---------------- ITEM ---------------- */
   const renderItem = ({ item }: { item: HistoryEvent }) => {
     const icon = getIcon(item.type);
 
     return (
       <View style={styles.item}>
         <View style={styles.itemHeader}>
-          <Icon
-            name={icon.name}
-            size={20}
-            color={icon.color}
-            style={{ marginRight: 8 }}
-          />
+          <Icon name={icon.name} size={20} color={icon.color} />
           <Text style={styles.typeText}>
-            [{item.type}] {item.description || '-'}
+            {item.type}
           </Text>
         </View>
 
+        <Text style={styles.description}>
+          {item.description || 'No description'}
+        </Text>
+
         {item.speed !== undefined && (
-          <Text style={styles.detail}>Speed: {item.speed} km/h</Text>
+          <Text style={styles.detail}>🚗 Speed: {item.speed} km/h</Text>
         )}
 
         {item.latitude !== undefined && item.longitude !== undefined && (
           <Text style={styles.detail}>
-            Location: {item.latitude.toFixed(5)}, {item.longitude.toFixed(5)}
+            📍 {item.latitude.toFixed(5)}, {item.longitude.toFixed(5)}
           </Text>
         )}
 
@@ -122,44 +141,50 @@ export default function HistoryScreen() {
     );
   };
 
+  /* ---------------- UI ---------------- */
   return (
     <View style={styles.container}>
-      {/* Header */}
+
+      {/* HEADER */}
       <View style={styles.header}>
         <Text style={styles.headerText}>History</Text>
 
-        <TouchableOpacity style={styles.clearButton} onPress={clearHistory}>
-          <Icon
-            name="trash-2"
-            size={16}
-            color="#e74c3c"
-            style={{ marginRight: 6 }}
-          />
-          <Text style={styles.clearButtonText}>Clear All</Text>
-        </TouchableOpacity>
+        {history.length > 0 && (
+          <TouchableOpacity style={styles.clearButton} onPress={clearHistory}>
+            <Icon name="trash-2" size={16} color="#fff" />
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* History List */}
-      <FlatList
-        data={history}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        contentContainerStyle={{ paddingBottom: 20 }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={['#e74c3c']}
-          />
-        }
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>No history available yet</Text>
-        }
-      />
+      {/* LOADING */}
+      {loading ? (
+        <ActivityIndicator size="large" color="#e74c3c" style={{ marginTop: 50 }} />
+      ) : (
+        <FlatList
+          data={history}
+          keyExtractor={(item, index) => item.id ?? index.toString()}
+          renderItem={renderItem}
+          contentContainerStyle={{ paddingBottom: 20 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#e74c3c']}
+            />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Icon name="clock" size={40} color="#ccc" />
+              <Text style={styles.emptyText}>No history yet</Text>
+            </View>
+          }
+        />
+      )}
     </View>
   );
 }
 
+/* ---------------- STYLES ---------------- */
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -172,7 +197,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
-    paddingHorizontal: 8,
   },
 
   headerText: {
@@ -182,65 +206,57 @@ const styles = StyleSheet.create({
   },
 
   clearButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-
-  clearButtonText: {
-    color: '#e74c3c',
-    fontWeight: '600',
-    fontSize: 14,
+    backgroundColor: '#e74c3c',
+    padding: 10,
+    borderRadius: 10,
   },
 
   item: {
     backgroundColor: '#fff',
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 14,
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
     elevation: 2,
   },
 
   itemHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: 8,
   },
 
   typeText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
-    color: '#111827',
+    color: '#e74c3c',
+  },
+
+  description: {
+    fontSize: 15,
+    marginTop: 6,
+    color: '#333',
   },
 
   detail: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#666',
-    marginBottom: 2,
+    marginTop: 4,
   },
 
   date: {
     fontSize: 12,
     color: '#999',
-    marginTop: 4,
+    marginTop: 6,
+  },
+
+  emptyContainer: {
+    alignItems: 'center',
+    marginTop: 80,
   },
 
   emptyText: {
-    textAlign: 'center',
+    marginTop: 10,
     color: '#999',
-    marginTop: 50,
     fontSize: 16,
   },
 });

@@ -16,7 +16,7 @@ import Geolocation from '@react-native-community/geolocation';
 import NetInfo from '@react-native-community/netinfo';
 import DeviceInfo from 'react-native-device-info';
 
-import { broadcastSOS } from '../services/bleMeshService';
+import { broadcastMeshPayload } from '../services/bleMeshService';
 
 type CrashSeverity = 'LOW' | 'MODERATE' | 'SEVERE' | 'CRITICAL';
 
@@ -53,10 +53,16 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
 
     countdownTimer.current = setTimeout(() => setCountdown(prev => prev - 1), 1000);
 
-    if (countdown === 1 && !cancelled && !alreadySent.current) {
-      alreadySent.current = true;
-      handleCrashDetected();
-    }
+    if (!alreadySent.current && countdown <= 1 && !cancelled) {
+  alreadySent.current = true;
+
+  // STOP TIMER IMMEDIATELY
+  if (countdownTimer.current) {
+    clearTimeout(countdownTimer.current);
+  }
+
+  handleCrashDetected();
+}
 
     return () => {
       if (countdownTimer.current) clearTimeout(countdownTimer.current);
@@ -77,15 +83,13 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
     try {
       const token = await AsyncStorage.getItem('token');
       if (!token) {
-        Alert.alert('Auth Error', 'Please login again.');
-        return;
-      }
+  console.log("No token, BLE only mode");
+}
 
       const location = await getCurrentLocation();
       if (!location) {
-        Alert.alert('Location Error', 'Unable to get GPS location.');
-        return;
-      }
+  console.log("No GPS, sending without location");
+}
 
       const batteryLevel = await DeviceInfo.getBatteryLevel();
       const batteryPercent = Math.round(batteryLevel * 100);
@@ -93,8 +97,8 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
       const netState = await NetInfo.fetch();
 
       const crashData = {
-        latitude: location.latitude,
-        longitude: location.longitude,
+        latitude: location?.latitude ?? 0,
+        longitude: location?.longitude ?? 0,
         impact_force: Number(impactForce.toFixed(2)),
         severity: severity,
         device_battery: batteryPercent,
@@ -107,7 +111,18 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
       };
 
       // Always broadcast via BLE mesh for offline support
-      broadcastSOS(crashData);
+      const meshId = `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+
+broadcastMeshPayload({
+  id: meshId,
+  type: 'CRASH',
+  latitude: crashData.latitude,
+  longitude: crashData.longitude,
+  impact_force: crashData.impact_force,
+  severity: crashData.severity,
+  device_id: crashData.device_id,
+  timestamp: Date.now(),
+});
 
       if (!netState.isConnected) {
         Alert.alert('Offline Mode', 'Crash broadcasted via nearby devices.');

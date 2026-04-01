@@ -8,6 +8,7 @@ import {
   Alert,
   Animated,
   ActivityIndicator,
+  AppState,
 } from 'react-native';
 
 import Icon from 'react-native-vector-icons/Feather';
@@ -15,10 +16,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Geolocation from '@react-native-community/geolocation';
 import NetInfo from '@react-native-community/netinfo';
 import DeviceInfo from 'react-native-device-info';
+import PushNotification from 'react-native-push-notification';
 
 import { broadcastMeshPayload } from '../services/bleMeshService';
 
 type CrashSeverity = 'LOW' | 'MODERATE' | 'SEVERE' | 'CRITICAL';
+type UserSensitivity = 'low' | 'medium' | 'high';
+
+const STORAGE_KEYS = {
+  crashSensitivity: '@settings_crash_sensitivity',
+};
 
 export default function CrashDetectionScreen({ navigation, route }: any) {
   const [countdown, setCountdown] = useState(10);
@@ -26,49 +33,102 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
   const [impactForce, setImpactForce] = useState(route?.params?.impactForce || 0);
   const [severity, setSeverity] = useState<CrashSeverity>('LOW');
   const [isSending, setIsSending] = useState(false);
+  const [userSensitivity, setUserSensitivity] = useState<UserSensitivity>('medium');
 
   const animatedCountdown = useRef(new Animated.Value(1)).current;
-  const countdownTimer = useRef<NodeJS.Timeout | null>(null);
   const alreadySent = useRef(false);
+  const triggerTimeRef = useRef<number | null>(null);
 
+  // ✅ Create Notification Channel (Android)
+  useEffect(() => {
+    PushNotification.createChannel({
+      channelId: 'crash-countdown-channel',
+      channelName: 'Crash Countdown Notifications',
+      importance: 4,
+    });
+  }, []);
+
+  // Load user sensitivity
+  useEffect(() => {
+    const loadSensitivity = async () => {
+      try {
+        const saved = await AsyncStorage.getItem(STORAGE_KEYS.crashSensitivity);
+        if (saved === 'low' || saved === 'medium' || saved === 'high') setUserSensitivity(saved);
+      } catch (e) {
+        console.warn('Failed to load sensitivity', e);
+      }
+    };
+    loadSensitivity();
+  }, []);
+
+  // Determine severity
   const determineSeverity = (g: number): CrashSeverity => {
-    if (g >= 4) return 'CRITICAL';
-    if (g >= 3.5) return 'SEVERE';
-    if (g >= 2.5) return 'MODERATE';
+    let thresholds;
+    switch(userSensitivity) {
+      case 'low': thresholds = { critical: 5, severe: 4, moderate: 3 }; break;
+      case 'medium': thresholds = { critical: 4, severe: 3.5, moderate: 2.5 }; break;
+      case 'high': thresholds = { critical: 3.5, severe: 3, moderate: 1.8 }; break;
+    }
+    if (g >= thresholds.critical) return 'CRITICAL';
+    if (g >= thresholds.severe) return 'SEVERE';
+    if (g >= thresholds.moderate) return 'MODERATE';
     return 'LOW';
   };
 
+  useEffect(() => { setSeverity(determineSeverity(impactForce)); }, [impactForce, userSensitivity]);
+
+  // Set trigger time
+  useEffect(() => { triggerTimeRef.current = Date.now() + 10000; }, []);
+
+  // Countdown + Notification
   useEffect(() => {
-    setSeverity(determineSeverity(impactForce));
+    if (cancelled) return;
+    const interval = setInterval(() => {
+      if (!triggerTimeRef.current) return;
+      const now = Date.now();
+      const remaining = Math.max(0, Math.ceil((triggerTimeRef.current - now) / 1000));
+      setCountdown(remaining);
+
+      // Animate circle
+      Animated.timing(animatedCountdown, {
+        toValue: 0,
+        duration: 500,
+        useNativeDriver: true,
+      }).start(() => animatedCountdown.setValue(1));
+
+      // Local notification
+      PushNotification.localNotification({
+        channelId: 'crash-countdown-channel',
+        title: 'Crash Detected!',
+        message: `Sending alert in ${remaining} seconds...`,
+        ongoing: true,
+        playSound: false,
+        vibrate: false,
+        ignoreInForeground: false,
+      });
+
+      if (!alreadySent.current && remaining === 0) {
+        alreadySent.current = true;
+        handleCrashDetected();
+        PushNotification.cancelAllLocalNotifications();
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [cancelled]);
+
+  // AppState check
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'active' && triggerTimeRef.current && !alreadySent.current && Date.now() >= triggerTimeRef.current) {
+        alreadySent.current = true;
+        handleCrashDetected();
+      }
+    });
+    return () => sub.remove();
   }, []);
 
-  useEffect(() => {
-    if (countdown <= 0 || cancelled) return;
-
-    Animated.timing(animatedCountdown, {
-      toValue: 0,
-      duration: 1000,
-      useNativeDriver: true,
-    }).start(() => animatedCountdown.setValue(1));
-
-    countdownTimer.current = setTimeout(() => setCountdown(prev => prev - 1), 1000);
-
-    if (!alreadySent.current && countdown <= 1 && !cancelled) {
-  alreadySent.current = true;
-
-  // STOP TIMER IMMEDIATELY
-  if (countdownTimer.current) {
-    clearTimeout(countdownTimer.current);
-  }
-
-  handleCrashDetected();
-}
-
-    return () => {
-      if (countdownTimer.current) clearTimeout(countdownTimer.current);
-    };
-  }, [countdown, cancelled]);
-
+  // Get location
   const getCurrentLocation = () =>
     new Promise<{ latitude: number; longitude: number } | null>((resolve) => {
       Geolocation.getCurrentPosition(
@@ -78,89 +138,50 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
       );
     });
 
+  // Send crash data
   const handleCrashDetected = async () => {
     setIsSending(true);
     try {
       const token = await AsyncStorage.getItem('token');
-      if (!token) {
-  console.log("No token, BLE only mode");
-}
-
       const location = await getCurrentLocation();
-      if (!location) {
-  console.log("No GPS, sending without location");
-}
-
-      const batteryLevel = await DeviceInfo.getBatteryLevel();
-      const batteryPercent = Math.round(batteryLevel * 100);
-
       const netState = await NetInfo.fetch();
 
+      const lat = location?.latitude ?? 0;
+      const lng = location?.longitude ?? 0;
+
+      broadcastMeshPayload({ latitude: lat, longitude: lng });
+      console.log("📡 BLE SENT:", lat, lng);
+
+      if (!netState.isConnected) {
+        Alert.alert('Offline Mode', 'Location broadcasted via BLE mesh.');
+        setIsSending(false);
+        return;
+      }
+
       const crashData = {
-        latitude: location?.latitude ?? 0,
-        longitude: location?.longitude ?? 0,
+        latitude: lat,
+        longitude: lng,
         impact_force: Number(impactForce.toFixed(2)),
-        severity: severity,
-        device_battery: batteryPercent,
-        network_type: netState.type ?? 'unknown',
+        severity,
         device_id: await DeviceInfo.getUniqueId(),
-        source: netState.isConnected ? 'direct' : 'mesh',
+        source: 'direct',
         timestamp: new Date().toISOString(),
-        packet_id: `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
         type: 'CRASH',
       };
 
-      // Always broadcast via BLE mesh for offline support
-      const meshId = `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const response = await fetch('https://rescuelink-backend-j0gz.onrender.com/api/v1/crash', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(crashData),
+      });
 
-broadcastMeshPayload({
-  id: meshId,
-  type: 'CRASH',
-  latitude: crashData.latitude,
-  longitude: crashData.longitude,
-  impact_force: crashData.impact_force,
-  severity: crashData.severity,
-  device_id: crashData.device_id,
-  timestamp: Date.now(),
-});
-
-      if (!netState.isConnected) {
-        Alert.alert('Offline Mode', 'Crash broadcasted via nearby devices.');
+      if (response.ok) {
+        Alert.alert('Emergency Sent', 'Crash alert sent to responders.', [{ text: 'OK', onPress: () => navigation.navigate('MainTabs') }]);
       } else {
-        // If online, send to backend
-        try {
-          const response = await fetch(
-            'https://rescuelink-backend-j0gz.onrender.com/api/v1/crash',
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify(crashData),
-            }
-          );
-
-          let data = null;
-          try {
-            data = await response.json();
-          } catch (_) {
-            data = null; // prevent crash if JSON fails
-          }
-
-          if (response.ok) {
-            Alert.alert(
-              'Emergency Sent',
-              'Crash alert sent to responders.',
-              [{ text: 'OK', onPress: () => navigation.navigate('MainTabs') }]
-            );
-          } else {
-            Alert.alert('Error', data?.message || 'Failed to send crash alert.');
-          }
-        } catch (err) {
-          console.log('Crash API error:', err);
-          Alert.alert('Network Error', 'Unable to send crash alert, but broadcasted via mesh.');
-        }
+        Alert.alert('Error', 'Failed to send crash alert.');
       }
     } catch (error) {
       console.log(error);
@@ -170,11 +191,14 @@ broadcastMeshPayload({
     }
   };
 
+  // Cancel
   const handleCancel = () => {
     setCancelled(true);
-    if (countdownTimer.current) clearTimeout(countdownTimer.current);
+    PushNotification.cancelAllLocalNotifications();
+    Alert.alert('Alert Cancelled', 'Crash alert was cancelled.');
   };
 
+  // UI
   const getSeverityColor = () => {
     switch (severity) {
       case 'CRITICAL': return '#C53030';
@@ -216,56 +240,83 @@ broadcastMeshPayload({
   );
 }
 
+/* ---------------- STYLES ---------------- */
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
   },
   center: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  button: {
-    marginTop: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    backgroundColor: '#E53E3E',
-    borderRadius: 8,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
+    backgroundColor: '#FFFFFF',
   },
   title: {
     fontSize: 24,
-    marginVertical: 12,
     fontWeight: 'bold',
+    color: '#0F172A',
+    marginVertical: 12,
+    textAlign: 'center',
   },
   impact: {
     fontSize: 20,
+    color: '#1E293B',
     marginVertical: 8,
+    fontWeight: '500',
   },
   severity: {
     fontSize: 20,
-    marginVertical: 8,
     fontWeight: 'bold',
+    marginVertical: 8,
   },
   countdownCircle: {
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: '#edf2f7',
+    backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
     marginVertical: 20,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   countdownText: {
     fontSize: 40,
     fontWeight: 'bold',
+    color: '#0F172A',
+  },
+  button: {
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    backgroundColor: '#E53E3E',
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  infoText: {
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  iconLarge: {
+    marginBottom: 16,
   },
 });

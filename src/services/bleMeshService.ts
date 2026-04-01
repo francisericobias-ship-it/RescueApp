@@ -1,26 +1,8 @@
 import { BleManager } from 'react-native-ble-plx';
-import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
-import { Buffer } from 'buffer';
 
 const manager = new BleManager();
 const receivedMessages = new Set<string>();
-
-/* ---------------- UUID CONFIG ---------------- */
-const SERVICE_UUID = "12345678-1234-1234-1234-1234567890ab";
-const CHARACTERISTIC_UUID = "abcd1234-5678-90ab-cdef-1234567890ab";
-
-/* ---------------- TYPES ---------------- */
-export type MeshPayload = {
-  id?: string;
-  type: 'CRASH' | 'SOS';
-  latitude?: number;
-  longitude?: number;
-  impact_force?: number;
-  severity?: string;
-  device_id?: string;
-  timestamp?: number;
-};
 
 /* ---------------- START SCAN (DEVICE B) ---------------- */
 export const startMeshScan = () => {
@@ -32,39 +14,50 @@ export const startMeshScan = () => {
       return;
     }
 
-    if (!device?.name || device.name !== "RescueLink") return;
+    if (!device?.name) return;
 
-    console.log("📥 FOUND DEVICE:", device.id);
+    // 🔥 LOOK FOR OUR PAYLOAD FORMAT
+    if (!device.name.startsWith("C|")) return;
+
+    console.log("📥 FOUND PAYLOAD:", device.name);
 
     try {
-      manager.stopDeviceScan();
+      const parts = device.name.split("|");
 
-      const connectedDevice = await device.connect();
-      await connectedDevice.discoverAllServicesAndCharacteristics();
+      const latitude = parseFloat(parts[1]);
+      const longitude = parseFloat(parts[2]);
 
-      const services = await connectedDevice.services();
+      const id = `${latitude}-${longitude}`;
 
-      for (const service of services) {
-        if (service.uuid !== SERVICE_UUID) continue;
+      if (receivedMessages.has(id)) return;
+      receivedMessages.add(id);
 
-        const characteristics = await service.characteristics();
+      console.log("📍 LOCATION:", latitude, longitude);
 
-        for (const char of characteristics) {
-          if (char.uuid !== CHARACTERISTIC_UUID) continue;
-
-          const value = await char.read();
-
-          if (!value?.value) return;
-
-          const decoded = Buffer.from(value.value, 'base64').toString('utf-8');
-          const data: MeshPayload = JSON.parse(decoded);
-
-          onReceiveMeshPayload(data);
-        }
+      const net = await NetInfo.fetch();
+      if (!net.isConnected) {
+        console.log("📴 No internet, cannot forward");
+        return;
       }
 
+      await fetch("https://rescuelink-backend-j0gz.onrender.com/api/v1/crash", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          latitude,
+          longitude,
+          source: "ble_relay",
+          type: "CRASH",
+          timestamp: new Date().toISOString(),
+        }),
+      });
+
+      console.log("✅ FORWARDED TO SERVER");
+
     } catch (err) {
-      console.log("Connection error:", err);
+      console.log("Parse error:", err);
     }
   });
 };
@@ -75,66 +68,24 @@ export const stopMeshScan = () => {
 };
 
 /* ---------------- BROADCAST (DEVICE A) ---------------- */
-export const broadcastMeshPayload = async (payload: MeshPayload) => {
+export const broadcastMeshPayload = (payload: {
+  latitude: number;
+  longitude: number;
+}) => {
   try {
-    const message = {
-      ...payload,
-      id: payload.id || generateId(),
-    };
+    const lat = payload.latitude.toFixed(4);
+    const lng = payload.longitude.toFixed(4);
 
-    const encoded = Buffer.from(JSON.stringify(message)).toString('base64');
+    const message = `C|${lat}|${lng}`;
 
-    console.log("📡 BROADCAST PAYLOAD:", message);
+    console.log("📡 BROADCASTING:", message);
 
-    // ⚠️ IMPORTANT:
-    // BLE PLX cannot create peripheral directly
-    // so we simulate using local characteristic cache (demo workaround)
-
-    global.__BLE_MESH_CACHE__ = encoded;
+    // ⚠️ DEMO ONLY:
+    // since BLE peripheral not supported,
+    // we fake it by renaming device via logs
+    global.__BLE_FAKE_NAME__ = message;
 
   } catch (e) {
     console.log("Broadcast error:", e);
   }
 };
-
-/* ---------------- RECEIVE + FORWARD ---------------- */
-const onReceiveMeshPayload = async (data: MeshPayload) => {
-  console.log("📥 RECEIVED:", data);
-
-  if (!data.id || receivedMessages.has(data.id)) return;
-  receivedMessages.add(data.id);
-
-  const net = await NetInfo.fetch();
-  if (!net.isConnected) {
-    console.log("📴 No internet, cannot forward");
-    return;
-  }
-
-  try {
-    await fetch("https://rescuelink-backend-j0gz.onrender.com/api/v1/crash", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        latitude: data.latitude,
-        longitude: data.longitude,
-        impact_force: data.impact_force,
-        severity: data.severity,
-        device_id: data.device_id,
-        timestamp: new Date().toISOString(),
-        source: "ble_relay",
-        packet_id: data.id,
-      }),
-    });
-
-    console.log("✅ FORWARDED TO SERVER");
-
-  } catch (e) {
-    console.log("API error:", e);
-  }
-};
-
-/* ---------------- HELPERS ---------------- */
-const generateId = () =>
-  `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;

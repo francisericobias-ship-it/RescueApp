@@ -1,4 +1,4 @@
-// HomeScreen.tsx (Fully Fixed + Typed + No Render Errors)
+ // HomeScreen.tsx (Fully Fixed + Typed + No Render Errors)
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
@@ -98,7 +98,18 @@ const startPulse = () => {
 
 
   useFocusEffect(useCallback(() => {
-    PushNotification.configure({ onNotification: () => {}, requestPermissions: Platform.OS === 'ios' });
+    PushNotification.configure({
+  onNotification: function (notification) {
+    console.log('NOTIF:', notification);
+
+    if (notification.action === 'Cancel') {
+      console.log('❌ Cancel pressed from notification');
+
+      global.cancelCrashCountdown?.();
+    }
+  },
+  requestPermissions: Platform.OS === 'ios',
+});
 
     if (Platform.OS === 'android') {
       PushNotification.createChannel({
@@ -567,4 +578,4 @@ const styles = StyleSheet.create({
   imageButtonText: {
     color: '#fff'
   }
-});
+}); 

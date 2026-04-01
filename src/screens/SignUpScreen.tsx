@@ -90,72 +90,122 @@ export default function SignUpScreen({ navigation }) {
     >
       <Text style={styles.title}>Create Account</Text>
 
-      {/* PERSONAL INFO */}
-      <Text style={styles.sectionTitle}>Personal Info</Text>
-
-      <TextInput style={styles.input} placeholder="First Name" value={firstName} onChangeText={setFirstName} />
-      <TextInput style={styles.input} placeholder="Last Name" value={lastName} onChangeText={setLastName} />
-      <TextInput style={styles.input} placeholder="Middle Name" value={middleName} onChangeText={setMiddleName} />
-      <TextInput style={styles.input} placeholder="Ext Name (Optional)" value={extName} onChangeText={setExtName} />
-
-      <TouchableOpacity style={styles.input} onPress={() => setShowDatePicker(true)}>
-        <Text style={styles.dateText}>Birth Date: {formatDate(birthDate)}</Text>
-      </TouchableOpacity>
-
-      {showDatePicker && (
-        <DateTimePicker
-          value={birthDate}
-          mode="date"
-          display="default"
-          maximumDate={new Date()}
-          onChange={onChangeDate}
+      <View style={styles.form}>
+        {/* PERSONAL INFO */}
+        <Text style={styles.sectionTitle}>Personal Info</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="First Name"
+          placeholderTextColor="#9CA3AF"
+          value={firstName}
+          onChangeText={setFirstName}
         />
-      )}
+        <TextInput
+          style={styles.input}
+          placeholder="Last Name"
+          placeholderTextColor="#9CA3AF"
+          value={lastName}
+          onChangeText={setLastName}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Middle Name"
+          placeholderTextColor="#9CA3AF"
+          value={middleName}
+          onChangeText={setMiddleName}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Ext Name (Optional)"
+          placeholderTextColor="#9CA3AF"
+          value={extName}
+          onChangeText={setExtName}
+        />
 
-      <TextInput
-        style={styles.input}
-        placeholder="Phone Number"
-        keyboardType="phone-pad"
-        value={userPhoneNumber}
-        onChangeText={setUserPhoneNumber}
-      />
-
-      {/* ACCOUNT INFO */}
-      <Text style={styles.sectionTitle}>Account Info</Text>
-
-      <TextInput style={styles.input} placeholder="Email" keyboardType="email-address" value={email} onChangeText={setEmail} />
-      <TextInput style={styles.input} placeholder="Username" value={username} onChangeText={setUsername} />
-      <TextInput style={styles.input} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} />
-      <TextInput style={styles.input} placeholder="Confirm Password" secureTextEntry value={passwordConfirmation} onChangeText={setPasswordConfirmation} />
-
-      {/* EMERGENCY CONTACT */}
-      <Text style={styles.sectionTitle}>Emergency Contact</Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Relative Number"
-        keyboardType="phone-pad"
-        value={relativeNumber}
-        onChangeText={setRelativeNumber}
-      />
-
-      {/* SIGN UP BUTTON */}
-      <TouchableOpacity
-        style={styles.button}
-        onPress={handleSignUp}
-        disabled={loading}
-      >
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Sign Up</Text>
+        <TouchableOpacity style={styles.input} onPress={() => setShowDatePicker(true)}>
+          <Text style={styles.dateText}>Birth Date: {formatDate(birthDate)}</Text>
+        </TouchableOpacity>
+        {showDatePicker && (
+          <DateTimePicker
+            value={birthDate}
+            mode="date"
+            display="default"
+            maximumDate={new Date()}
+            onChange={onChangeDate}
+          />
         )}
-      </TouchableOpacity>
 
-      {/* 🔥 SEPARATED LOGIN BUTTON */}
+        <TextInput
+          style={styles.input}
+          placeholder="Phone Number"
+          placeholderTextColor="#9CA3AF"
+          keyboardType="phone-pad"
+          value={userPhoneNumber}
+          onChangeText={setUserPhoneNumber}
+        />
+
+        {/* ACCOUNT INFO */}
+        <Text style={styles.sectionTitle}>Account Info</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Email"
+          placeholderTextColor="#9CA3AF"
+          keyboardType="email-address"
+          value={email}
+          onChangeText={setEmail}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Username"
+          placeholderTextColor="#9CA3AF"
+          value={username}
+          onChangeText={setUsername}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Password"
+          placeholderTextColor="#9CA3AF"
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Confirm Password"
+          placeholderTextColor="#9CA3AF"
+          secureTextEntry
+          value={passwordConfirmation}
+          onChangeText={setPasswordConfirmation}
+        />
+
+        {/* EMERGENCY CONTACT */}
+        <Text style={styles.sectionTitle}>Emergency Contact</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Relative Number"
+          placeholderTextColor="#9CA3AF"
+          keyboardType="phone-pad"
+          value={relativeNumber}
+          onChangeText={setRelativeNumber}
+        />
+
+        {/* SIGN UP BUTTON */}
+        <TouchableOpacity
+          style={[styles.button, loading && { opacity: 0.7 }]}
+          onPress={handleSignUp}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Sign Up</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {/* 🔥 LOGIN LINK */}
       <View style={styles.loginContainer}>
         <Text style={styles.loginLabel}>Already have an account?</Text>
-
         <TouchableOpacity
           style={styles.loginButton}
           onPress={() => navigation.navigate('Login')}
@@ -163,91 +213,81 @@ export default function SignUpScreen({ navigation }) {
           <Text style={styles.loginButtonText}>Login</Text>
         </TouchableOpacity>
       </View>
-
     </ScrollView>
   );
 }
 
 /* ---------------- STYLES ---------------- */
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F9FAFB',
-    paddingHorizontal: 20,
+    padding: 24,
   },
-
   content: {
-    paddingVertical: 40,
+    paddingVertical: 20,
   },
-
   title: {
-    fontSize: 28,
+    fontSize: 36,
     fontWeight: 'bold',
-    color: '#111827',
-    marginBottom: 30,
+    color: '#e74c3c',
     textAlign: 'center',
+    marginBottom: 20,
   },
-
+  form: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 24,
+    elevation: 4,
+  },
   sectionTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#e74c3c',
-    marginBottom: 10,
+    color: '#6B7280',
     marginTop: 10,
+    marginBottom: 8,
   },
-
   input: {
-    height: 50,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingHorizontal: 15,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-
-  dateText: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 14,
+    fontSize: 16,
     color: '#111827',
   },
-
-  button: {
-    height: 55,
-    backgroundColor: '#e74c3c',
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 15,
+  dateText: {
+    color: '#111827',
+    fontSize: 16,
   },
-
+  button: {
+    backgroundColor: '#e74c3c',
+    paddingVertical: 16,
+    borderRadius: 16,
+    alignItems: 'center',
+    marginTop: 10,
+  },
   buttonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
   },
-
-  /* 🔥 LOGIN SECTION */
   loginContainer: {
-    marginTop: 25,
+    marginTop: 30,
     alignItems: 'center',
   },
-
   loginLabel: {
     color: '#6B7280',
     marginBottom: 8,
   },
-
   loginButton: {
     paddingVertical: 10,
-    paddingHorizontal: 25,
-    borderRadius: 10,
+    paddingHorizontal: 30,
+    borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#e74c3c',
   },
-
   loginButtonText: {
     color: '#e74c3c',
     fontWeight: 'bold',
-    fontSize: 15,
   },
 });

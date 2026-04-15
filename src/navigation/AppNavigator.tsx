@@ -9,12 +9,19 @@ import BottomTabNavigator from './BottomTabNavigator';
 import CrashDetectionScreen from '../screens/CrashDetectionScreen';
 import OnboardingScreen from '../screens/OnboardingScreen';
 
+// 🔥 IMPORT NAV REF
+import { navigationRef } from '../services/NavigationService';
+
 export type RootStackParamList = {
   Onboarding: undefined;
   Login: undefined;
   SignUp: undefined;
   MainTabs: undefined;
-  CrashDetection: { crashSensitivity?: 'low' | 'medium' | 'high' };
+
+  // 🔥 FIX NAME (MATCH SA GINAGAMIT NATIN)
+  CrashDetectionScreen: {
+    impactForce?: number;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -26,12 +33,13 @@ interface AppNavigatorProps {
 export default function AppNavigator({ initialRouteName }: AppNavigatorProps) {
   return (
     <SafeAreaProvider>
-      <NavigationContainer>
+      {/* 🔥 ADD navigationRef */}
+      <NavigationContainer ref={navigationRef}>
         <Stack.Navigator
           initialRouteName={initialRouteName}
           screenOptions={{
-            headerShown: false, // 🔥 REMOVE ALL HEADERS
-            animation: 'slide_from_right', // optional: smoother transition
+            headerShown: false,
+            animation: 'slide_from_right',
           }}
         >
 
@@ -58,9 +66,9 @@ export default function AppNavigator({ initialRouteName }: AppNavigatorProps) {
             component={BottomTabNavigator}
           />
 
-          {/* Crash Detection */}
+          {/* 🚨 CRASH SCREEN */}
           <Stack.Screen
-            name="CrashDetection"
+            name="CrashDetectionScreen"
             component={CrashDetectionScreen}
           />
 

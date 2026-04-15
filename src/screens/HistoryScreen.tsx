@@ -4,13 +4,15 @@ import {
   Text,
   FlatList,
   StyleSheet,
- TouchableOpacity,
+  TouchableOpacity,
   Alert,
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
+
 import { useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Feather';
+
 import {
   getHistoryEvents,
   clearHistory as clearHistoryStorage,
@@ -66,7 +68,7 @@ export default function HistoryScreen() {
     setRefreshing(false);
   }, []);
 
-  /* ---------------- CLEAR ---------------- */
+  /* ---------------- CLEAR HISTORY ---------------- */
   const clearHistory = () => {
     Alert.alert(
       'Clear History',
@@ -94,20 +96,28 @@ export default function HistoryScreen() {
     switch (type) {
       case 'SOS':
         return { name: 'alert-circle', color: '#e74c3c' };
+
       case 'CRASH':
         return { name: 'alert-triangle', color: '#f39c12' };
+
+      case 'CRASH_CANCELLED': // ✅ ADDED FIX
+        return { name: 'x-circle', color: '#6b7280' };
+
       case 'DRIVING_ON':
         return { name: 'navigation', color: '#2ecc71' };
+
       case 'DRIVING_OFF':
         return { name: 'square', color: '#95a5a6' };
+
       case 'ADMIN_ACCEPTED':
         return { name: 'check-circle', color: '#27ae60' };
+
       default:
         return { name: 'info', color: '#4C6EF5' };
     }
   };
 
-  /* ---------------- ITEM ---------------- */
+  /* ---------------- RENDER ITEM ---------------- */
   const renderItem = ({ item }: { item: HistoryEvent }) => {
     const icon = getIcon(item.type);
 
@@ -115,15 +125,14 @@ export default function HistoryScreen() {
       <View style={styles.item}>
         <View style={styles.itemHeader}>
           <Icon name={icon.name} size={20} color={icon.color} />
-          <Text style={styles.typeText}>
-            {item.type}
-          </Text>
+          <Text style={styles.typeText}>{item.type}</Text>
         </View>
 
         <Text style={styles.description}>
           {item.description || 'No description'}
         </Text>
 
+        {/* OPTIONAL DETAILS */}
         {item.speed !== undefined && (
           <Text style={styles.detail}>🚗 Speed: {item.speed} km/h</Text>
         )}
@@ -158,7 +167,11 @@ export default function HistoryScreen() {
 
       {/* LOADING */}
       {loading ? (
-        <ActivityIndicator size="large" color="#e74c3c" style={{ marginTop: 50 }} />
+        <ActivityIndicator
+          size="large"
+          color="#e74c3c"
+          style={{ marginTop: 50 }}
+        />
       ) : (
         <FlatList
           data={history}

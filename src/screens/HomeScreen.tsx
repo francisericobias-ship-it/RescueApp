@@ -227,7 +227,7 @@ saveHistoryEvent({
       const payload = { type: 'CRASH', impactForce: gForce, timestamp: Date.now() };
 
       if (isOnline) {
-        navigation.navigate('CrashDetection', { impactForce: gForce });
+        navigation.navigate('CrashDetectionScreen', { impactForce: gForce });
       } else {
         broadcastMeshPayload(payload);
         Alert.alert('Offline Mode', 'SOS sent via nearby devices');

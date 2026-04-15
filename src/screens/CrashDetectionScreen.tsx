@@ -1,4 +1,3 @@
-// CrashDetectionScreen.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -9,6 +8,8 @@ import {
   Animated,
   ActivityIndicator,
   AppState,
+  Vibration,
+  Platform,
 } from 'react-native';
 
 import Icon from 'react-native-vector-icons/Feather';
@@ -16,9 +17,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Geolocation from '@react-native-community/geolocation';
 import NetInfo from '@react-native-community/netinfo';
 import DeviceInfo from 'react-native-device-info';
-import PushNotification from 'react-native-push-notification';
+import { activateKeepAwake, deactivateKeepAwake } from '@sayem314/react-native-keep-awake';
 
 import { broadcastMeshPayload } from '../services/bleMeshService';
+import { saveHistoryEvent } from '../services/historyStorage';
 
 type CrashSeverity = 'LOW' | 'MODERATE' | 'SEVERE' | 'CRITICAL';
 type UserSensitivity = 'low' | 'medium' | 'high';
@@ -28,107 +30,137 @@ const STORAGE_KEYS = {
 };
 
 export default function CrashDetectionScreen({ navigation, route }: any) {
+
+  /* ---------------- STATE ---------------- */
   const [countdown, setCountdown] = useState(10);
   const [cancelled, setCancelled] = useState(false);
-  const [impactForce, setImpactForce] = useState(route?.params?.impactForce || 0);
+  const [impactForce] = useState(route?.params?.impactForce || 0);
   const [severity, setSeverity] = useState<CrashSeverity>('LOW');
   const [isSending, setIsSending] = useState(false);
   const [userSensitivity, setUserSensitivity] = useState<UserSensitivity>('medium');
 
+  /* ---------------- REFS ---------------- */
   const animatedCountdown = useRef(new Animated.Value(1)).current;
   const alreadySent = useRef(false);
   const triggerTimeRef = useRef<number | null>(null);
 
-  // ✅ Create Notification Channel (Android)
+  // 🔥 vibration control
+  const vibrationActive = useRef(false);
+  const vibrationInterval = useRef<any>(null);
+
+  /* ---------------- KEEP SCREEN ON ---------------- */
   useEffect(() => {
-    PushNotification.createChannel({
-      channelId: 'crash-countdown-channel',
-      channelName: 'Crash Countdown Notifications',
-      importance: 4,
-    });
+    if (Platform.OS === 'android') activateKeepAwake();
+    return () => deactivateKeepAwake();
   }, []);
 
-  // Load user sensitivity
+  /* ---------------- FIXED VIBRATION ---------------- */
+  useEffect(() => {
+    vibrationActive.current = true;
+
+    vibrationInterval.current = setInterval(() => {
+      if (!vibrationActive.current) return;
+
+      // vibrate 1 second
+      Vibration.vibrate(1000);
+    }, 2000);
+
+    return () => {
+      vibrationActive.current = false;
+      if (vibrationInterval.current) clearInterval(vibrationInterval.current);
+      Vibration.cancel();
+    };
+  }, []);
+
+  /* ---------------- LOAD SETTINGS ---------------- */
   useEffect(() => {
     const loadSensitivity = async () => {
       try {
         const saved = await AsyncStorage.getItem(STORAGE_KEYS.crashSensitivity);
-        if (saved === 'low' || saved === 'medium' || saved === 'high') setUserSensitivity(saved);
-      } catch (e) {
-        console.warn('Failed to load sensitivity', e);
-      }
+        if (saved === 'low' || saved === 'medium' || saved === 'high') {
+          setUserSensitivity(saved);
+        }
+      } catch {}
     };
     loadSensitivity();
   }, []);
 
-  // Determine severity
+  /* ---------------- DETERMINE SEVERITY ---------------- */
   const determineSeverity = (g: number): CrashSeverity => {
     let thresholds;
-    switch(userSensitivity) {
-      case 'low': thresholds = { critical: 5, severe: 4, moderate: 3 }; break;
-      case 'medium': thresholds = { critical: 4, severe: 3.5, moderate: 2.5 }; break;
-      case 'high': thresholds = { critical: 3.5, severe: 3, moderate: 1.8 }; break;
+
+    switch (userSensitivity) {
+      case 'low':
+        thresholds = { critical: 5, severe: 4, moderate: 3 };
+        break;
+      case 'medium':
+        thresholds = { critical: 4, severe: 3.5, moderate: 2.5 };
+        break;
+      default:
+        thresholds = { critical: 3.5, severe: 3, moderate: 1.8 };
     }
+
     if (g >= thresholds.critical) return 'CRITICAL';
     if (g >= thresholds.severe) return 'SEVERE';
     if (g >= thresholds.moderate) return 'MODERATE';
     return 'LOW';
   };
 
-  useEffect(() => { setSeverity(determineSeverity(impactForce)); }, [impactForce, userSensitivity]);
+  useEffect(() => {
+    setSeverity(determineSeverity(impactForce));
+  }, [impactForce, userSensitivity]);
 
-  // Set trigger time
-  useEffect(() => { triggerTimeRef.current = Date.now() + 10000; }, []);
+  /* ---------------- TIMER ---------------- */
+  useEffect(() => {
+    triggerTimeRef.current = Date.now() + 10000;
+  }, []);
 
-  // Countdown + Notification
   useEffect(() => {
     if (cancelled) return;
-    const interval = setInterval(() => {
+
+    const tick = () => {
       if (!triggerTimeRef.current) return;
+
       const now = Date.now();
-      const remaining = Math.max(0, Math.ceil((triggerTimeRef.current - now) / 1000));
+      const remaining = Math.max(
+        0,
+        Math.ceil((triggerTimeRef.current - now) / 1000)
+      );
+
       setCountdown(remaining);
 
-      // Animate circle
       Animated.timing(animatedCountdown, {
         toValue: 0,
-        duration: 500,
+        duration: 400,
         useNativeDriver: true,
       }).start(() => animatedCountdown.setValue(1));
 
-      // Local notification
-      PushNotification.localNotification({
-        channelId: 'crash-countdown-channel',
-        title: 'Crash Detected!',
-        message: `Sending alert in ${remaining} seconds...`,
-        ongoing: true,
-        playSound: false,
-        vibrate: false,
-        ignoreInForeground: false,
-      });
-
-      if (!alreadySent.current && remaining === 0) {
+      if (!alreadySent.current && remaining <= 0) {
         alreadySent.current = true;
         handleCrashDetected();
-        PushNotification.cancelAllLocalNotifications();
       }
-    }, 1000);
+    };
 
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [cancelled]);
 
-  // AppState check
+  /* ---------------- APPSTATE FIX ---------------- */
   useEffect(() => {
     const sub = AppState.addEventListener('change', state => {
-      if (state === 'active' && triggerTimeRef.current && !alreadySent.current && Date.now() >= triggerTimeRef.current) {
-        alreadySent.current = true;
-        handleCrashDetected();
+      if (state === 'active' && triggerTimeRef.current && !alreadySent.current) {
+        if (Date.now() >= triggerTimeRef.current) {
+          alreadySent.current = true;
+          handleCrashDetected();
+        }
       }
     });
+
     return () => sub.remove();
   }, []);
 
-  // Get location
+  /* ---------------- LOCATION ---------------- */
   const getCurrentLocation = () =>
     new Promise<{ latitude: number; longitude: number } | null>((resolve) => {
       Geolocation.getCurrentPosition(
@@ -138,9 +170,15 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
       );
     });
 
-  // Send crash data
+  /* ---------------- SEND CRASH ---------------- */
   const handleCrashDetected = async () => {
+    // 🔥 STOP vibration
+    vibrationActive.current = false;
+    if (vibrationInterval.current) clearInterval(vibrationInterval.current);
+    Vibration.cancel();
+
     setIsSending(true);
+
     try {
       const token = await AsyncStorage.getItem('token');
       const location = await getCurrentLocation();
@@ -150,92 +188,124 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
       const lng = location?.longitude ?? 0;
 
       broadcastMeshPayload({ latitude: lat, longitude: lng });
-      console.log("📡 BLE SENT:", lat, lng);
+
+      await saveHistoryEvent({
+        id: Date.now().toString(),
+        type: 'CRASH',
+        description: 'Auto crash detected and sent',
+        timestamp: Date.now(),
+        latitude: lat,
+        longitude: lng,
+      });
 
       if (!netState.isConnected) {
-        Alert.alert('Offline Mode', 'Location broadcasted via BLE mesh.');
+        Alert.alert('Offline Mode', 'Sent via BLE mesh.');
         setIsSending(false);
         return;
       }
 
-      const crashData = {
-        latitude: lat,
-        longitude: lng,
-        impact_force: Number(impactForce.toFixed(2)),
-        severity,
-        device_id: await DeviceInfo.getUniqueId(),
-        source: 'direct',
-        timestamp: new Date().toISOString(),
-        type: 'CRASH',
-      };
-
-      const response = await fetch('https://rescuelink-backend-j0gz.onrender.com/api/v1/crash', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(crashData),
-      });
+      const response = await fetch(
+        'https://rescuelink-backend-j0gz.onrender.com/api/v1/crash',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            latitude: lat,
+            longitude: lng,
+            impact_force: Number(impactForce.toFixed(2)),
+            severity,
+            device_id: await DeviceInfo.getUniqueId(),
+            timestamp: new Date().toISOString(),
+            type: 'CRASH',
+          }),
+        }
+      );
 
       if (response.ok) {
-        Alert.alert('Emergency Sent', 'Crash alert sent to responders.', [{ text: 'OK', onPress: () => navigation.navigate('MainTabs') }]);
+        Alert.alert('Emergency Sent', 'Crash alert sent.', [
+          { text: 'OK', onPress: () => navigation.navigate('MainTabs') },
+        ]);
       } else {
         Alert.alert('Error', 'Failed to send crash alert.');
       }
-    } catch (error) {
-      console.log(error);
+
+    } catch {
       Alert.alert('Error', 'Crash detection failed.');
     } finally {
       setIsSending(false);
     }
   };
 
-  // Cancel
-  const handleCancel = () => {
+  /* ---------------- CANCEL ---------------- */
+  const handleCancel = async () => {
+    // 🔥 STOP vibration
+    vibrationActive.current = false;
+    if (vibrationInterval.current) clearInterval(vibrationInterval.current);
+    Vibration.cancel();
+
     setCancelled(true);
-    PushNotification.cancelAllLocalNotifications();
-    Alert.alert('Alert Cancelled', 'Crash alert was cancelled.');
+
+    await saveHistoryEvent({
+      id: Date.now().toString(),
+      type: 'CRASH',
+      description: '❌ Crash cancelled by user',
+      timestamp: Date.now(),
+    });
+
+    Alert.alert('Cancelled', 'Crash alert cancelled.', [
+      { text: 'OK', onPress: () => navigation.navigate('MainTabs') },
+    ]);
   };
 
-  // UI
   const getSeverityColor = () => {
     switch (severity) {
-      case 'CRITICAL': return '#C53030';
-      case 'SEVERE': return '#E53E3E';
-      case 'MODERATE': return '#DD6B20';
-      default: return '#38A169';
+      case 'CRITICAL': return '#FF0000';
+      case 'SEVERE': return '#FF3B30';
+      case 'MODERATE': return '#FF9500';
+      default: return '#34C759';
     }
   };
 
+  /* ---------------- UI ---------------- */
   if (cancelled) {
     return (
       <View style={styles.center}>
-        <Icon name="x-circle" size={96} color="#E53E3E" />
+        <Icon name="x-circle" size={96} color="#FF3B30" />
         <Text style={styles.title}>Alert Cancelled</Text>
-        <Pressable style={styles.button} onPress={() => navigation.goBack()}>
-          <Text style={styles.buttonText}>Back</Text>
-        </Pressable>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <Icon name="alert-triangle" size={96} color={getSeverityColor()} />
-      <Text style={styles.title}>Crash Impact Detected</Text>
-      <Text style={styles.impact}>G-Force: {impactForce.toFixed(2)}G</Text>
-      <Text style={[styles.severity, { color: getSeverityColor() }]}>{severity}</Text>
+      <Icon name="alert-triangle" size={110} color={getSeverityColor()} />
 
-      <Animated.View style={[styles.countdownCircle, { transform: [{ scale: animatedCountdown }] }]}>
+      <Text style={styles.title}>POSSIBLE CRASH DETECTED</Text>
+
+      <Text style={styles.impact}>
+        {impactForce.toFixed(2)} G Impact
+      </Text>
+
+      <Text style={[styles.severity, { color: getSeverityColor() }]}>
+        {severity}
+      </Text>
+
+      <Animated.View style={styles.countdownCircle}>
         <Text style={styles.countdownText}>{countdown}</Text>
       </Animated.View>
 
+      <Text style={styles.warning}>
+        Emergency alert will be sent automatically
+      </Text>
+
       <Pressable style={styles.button} onPress={handleCancel}>
-        <Text style={styles.buttonText}>I'm OK – Cancel</Text>
+        <Text style={styles.buttonText}>I'M OK - CANCEL</Text>
       </Pressable>
 
-      {isSending && <ActivityIndicator size="large" color="#E53E3E" />}
+      {isSending && <ActivityIndicator size="large" color="#FF3B30" />}
     </View>
   );
 }
@@ -244,79 +314,62 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#000',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
-    backgroundColor: '#FFFFFF',
   },
   center: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#000',
   },
   title: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: 'bold',
-    color: '#0F172A',
+    color: '#FFF',
     marginVertical: 12,
     textAlign: 'center',
   },
   impact: {
     fontSize: 20,
-    color: '#1E293B',
-    marginVertical: 8,
-    fontWeight: '500',
+    color: '#DDD',
   },
   severity: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
-    marginVertical: 8,
   },
   countdownCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#F1F5F9',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: '#111',
     justifyContent: 'center',
     alignItems: 'center',
     marginVertical: 20,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    borderWidth: 2,
+    borderColor: '#FF3B30',
   },
   countdownText: {
-    fontSize: 40,
+    fontSize: 50,
     fontWeight: 'bold',
-    color: '#0F172A',
+    color: '#FFF',
+  },
+  warning: {
+    color: '#FF3B30',
+    fontSize: 14,
   },
   button: {
     marginTop: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-    backgroundColor: '#E53E3E',
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    backgroundColor: '#FF3B30',
+    borderRadius: 30,
   },
   buttonText: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    textAlign: 'center',
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#64748B',
-    textAlign: 'center',
-    marginTop: 8,
-  },
-  iconLarge: {
-    marginBottom: 16,
+    fontWeight: 'bold',
+    color: '#FFF',
   },
 });

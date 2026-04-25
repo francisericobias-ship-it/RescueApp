@@ -3,130 +3,226 @@ import { BleManager, Device } from 'react-native-ble-plx';
 
 const manager = new BleManager();
 
-// Store received messages to prevent duplicates
-const receivedMessages = new Set<string>();
+/* ---------------- TYPES ---------------- */
+type MeshPayload = {
+  latitude: number;
+  longitude: number;
+};
 
-// ---------------- START SCAN (DEVICE B / Relay) ----------------
-export const startMeshScan = () => {
-  console.log("📡 SCANNING STARTED (SIMULATED)");
+type RelayMessage = {
+  message: string;
+  timestamp: number;
+};
 
-  manager.startDeviceScan(null, null, async (error: any, device: Device | null) => {
-    if (error) {
-      console.log("Scan error:", error);
-      return;
-    }
+/* ---------------- GLOBAL STORE ---------------- */
+const getGlobalStore = (): RelayMessage[] => {
+  const g = global as any;
 
-    if (!device?.name) return;
+  if (!g.__MESH_STORE__) {
+    g.__MESH_STORE__ = [];
+  }
 
-    // Only accept payloads starting with "C|"
-    if (!device.name.startsWith("C|")) return;
+  return g.__MESH_STORE__;
+};
 
-    console.log("📥 FOUND PAYLOAD:", device.name);
+/* ---------------- DEDUP SYSTEM ---------------- */
+const scanSeen = new Set<string>();
+const relaySeen = new Set<string>();
+
+const MAX_DEDUP_SIZE = 200;
+
+/* SAFE DEDUP */
+const safeAddDedup = (store: Set<string>, id: string) => {
+  if (store.has(id)) return false;
+
+  store.add(id);
+
+  if (store.size > MAX_DEDUP_SIZE) {
+    const first = store.values().next().value;
+    store.delete(first);
+  }
+
+  return true;
+};
+
+/* ---------------- INTERNET CHECK ---------------- */
+const isOnline = async () => {
+  const net = await NetInfo.fetch();
+  return !!net.isConnected;
+};
+
+/* ---------------- BROADCAST ---------------- */
+const broadcast = (message: string) => {
+  const store = getGlobalStore();
+
+  store.push({
+    message,
+    timestamp: Date.now(),
+  });
+
+  if (store.length > 500) store.shift();
+
+  console.log("📡 BROADCAST:", message);
+};
+
+/* =========================================================
+   📡 SCANNER (RECEIVER / RELAY NODE)
+========================================================= */
+export const startMeshScan = (onReceive?: (payload: any) => void) => {
+  console.log("📡 BLE SCAN STARTED");
+
+  manager.startDeviceScan(null, null, async (error, device) => {
+    if (error || !device) return;
+
+    const name = device.name || device.localName;
+    if (!name || typeof name !== 'string') return;
+
+    if (!name.startsWith("C|")) return;
 
     try {
-      const parts = device.name.split("|");
-      const latitude = parseFloat(parts[1]);
-      const longitude = parseFloat(parts[2]);
-      const id = `${latitude}-${longitude}`;
+      const parts = name.split("|");
 
-      // Deduplicate
-      if (receivedMessages.has(id)) return;
-      receivedMessages.add(id);
+      const messageId = parts[1];
+      const latitude = parseFloat(parts[2]);
+      const longitude = parseFloat(parts[3]);
+      const ttl = Number(parts[4] || 0);
 
-      console.log("📍 LOCATION RECEIVED:", latitude, longitude);
+      if (!messageId || isNaN(latitude) || isNaN(longitude)) return;
 
-      // Check internet
-      const net = await NetInfo.fetch();
-      if (!net.isConnected) {
-        console.log("📴 No internet, will hold payload for later");
-        return;
-      }
+      /* ---------------- DEDUP ---------------- */
+      if (!safeAddDedup(scanSeen, messageId)) return;
 
-      // Forward to server
-      await fetch("https://rescuelink-backend-j0gz.onrender.com/api/v1/crash", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          latitude,
-          longitude,
-          source: "ble_relay",
-          type: "CRASH",
-          timestamp: new Date().toISOString(),
-        }),
+      console.log("📥 RECEIVED:", {
+        messageId,
+        latitude,
+        longitude,
+        ttl,
       });
 
-      console.log("✅ FORWARDED TO SERVER");
+      /* ---------------- SEND TO APP ---------------- */
+      onReceive?.({
+        id: messageId,
+        latitude,
+        longitude,
+        ttl,
+      });
+
+      /* ---------------- RELAY LOGIC ---------------- */
+      if (ttl > 0) {
+        const newTTL = ttl - 1;
+
+        const packet = `C|${messageId}|${latitude}|${longitude}|${newTTL}`;
+
+        setTimeout(() => {
+          broadcast(packet);
+          console.log("🔁 RELAYED:", newTTL);
+        }, 300);
+      }
+
+      /* ---------------- SERVER GATEWAY ---------------- */
+      if (await isOnline()) {
+        await fetch(
+          "https://rescuelink-backend-j0gz.onrender.com/api/v1/crash",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              latitude,
+              longitude,
+              source: "ble_mesh",
+              type: "CRASH",
+              packet_id: messageId,
+            }),
+          }
+        );
+
+        console.log("✅ SENT TO SERVER");
+      }
 
     } catch (err) {
-      console.log("Parse / Forward error:", err);
+      console.log("Parse error:", err);
     }
   });
 };
 
-// ---------------- STOP SCAN ----------------
+/* =========================================================
+   🛑 STOP SCAN
+========================================================= */
 export const stopMeshScan = () => {
   manager.stopDeviceScan();
-  console.log("🛑 SCAN STOPPED");
+  console.log("🛑 BLE SCAN STOPPED");
 };
 
-// ---------------- BROADCAST (DEVICE A / Victim) ----------------
-export const broadcastMeshPayload = (payload: { latitude: number; longitude: number }) => {
-  try {
-    const lat = payload.latitude.toFixed(4);
-    const lng = payload.longitude.toFixed(4);
+/* =========================================================
+   📤 ORIGIN BROADCAST
+========================================================= */
+export const broadcastMeshPayload = (payload: MeshPayload) => {
+  const messageId = `${Date.now()}`;
+  const ttl = 3;
 
-    const message = `C|${lat}|${lng}`;
-    console.log("📡 BROADCASTING SIMULATED PAYLOAD:", message);
+  const message = `C|${messageId}|${payload.latitude}|${payload.longitude}|${ttl}`;
 
-    // ⚠️ DEMO ONLY: since BLE peripheral not supported
-    // we use global var to simulate broadcast
-    if (!global.__SIMULATED_MESH_MESSAGES__) {
-      global.__SIMULATED_MESH_MESSAGES__ = [];
-    }
+  broadcast(message);
 
-    global.__SIMULATED_MESH_MESSAGES__.push({ message, timestamp: Date.now() });
-
-  } catch (e) {
-    console.log("Broadcast error:", e);
-  }
+  console.log("🚨 ORIGIN:", message);
 };
 
-// ---------------- SIMULATE RELAY POLLING ----------------
+/* =========================================================
+   🔁 RELAY ENGINE
+========================================================= */
 export const relaySimulatedMesh = async () => {
-  if (!global.__SIMULATED_MESH_MESSAGES__) return;
+  const store = getGlobalStore();
+  const snapshot = [...store];
 
-  const messages = global.__SIMULATED_MESH_MESSAGES__;
-  for (const msgObj of messages) {
-    // Deduplicate
-    if (receivedMessages.has(msgObj.message)) continue;
-    receivedMessages.add(msgObj.message);
+  for (const item of snapshot) {
+    try {
+      const parts = item.message.split("|");
 
-    // Parse coordinates
-    const parts = msgObj.message.split("|");
-    const latitude = parseFloat(parts[1]);
-    const longitude = parseFloat(parts[2]);
+      const messageId = parts[1];
+      const latitude = parseFloat(parts[2]);
+      const longitude = parseFloat(parts[3]);
+      const ttl = Number(parts[4] || 0);
 
-    console.log("🔁 RELAY PROCESSING MESSAGE:", latitude, longitude);
+      if (!messageId || isNaN(latitude) || isNaN(longitude)) continue;
 
-    // Forward to server if online
-    const net = await NetInfo.fetch();
-    if (net.isConnected) {
-      await fetch("https://rescuelink-backend-j0gz.onrender.com/api/v1/crash", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          latitude,
-          longitude,
-          source: "ble_relay_sim",
-          type: "CRASH",
-          timestamp: new Date().toISOString(),
-        }),
-      });
-      console.log("✅ RELAY FORWARDED TO SERVER");
-    } else {
-      console.log("📴 Relay offline, will retry later");
+      /* ---------------- DEDUP ---------------- */
+      if (!safeAddDedup(relaySeen, messageId)) continue;
+
+      console.log("🔁 RELAY ENGINE:", messageId);
+
+      /* ---------------- RELAY ---------------- */
+      if (ttl > 0) {
+        const newTTL = ttl - 1;
+
+        const relayPacket = `C|${messageId}|${latitude}|${longitude}|${newTTL}`;
+
+        setTimeout(() => {
+          broadcast(relayPacket);
+        }, 200);
+      }
+
+      /* ---------------- SERVER RELAY ---------------- */
+      if (await isOnline()) {
+        await fetch(
+          "https://rescuelink-backend-j0gz.onrender.com/api/v1/crash",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              latitude,
+              longitude,
+              source: "relay_engine",
+              type: "CRASH",
+              packet_id: messageId,
+            }),
+          }
+        );
+
+        console.log("✅ ENGINE SENT");
+      }
+
+    } catch (err) {
+      console.log("Relay error:", err);
     }
   }
 };

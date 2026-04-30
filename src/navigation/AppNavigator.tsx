@@ -8,6 +8,8 @@ import SignUpScreen from '../screens/SignUpScreen';
 import BottomTabNavigator from './BottomTabNavigator';
 import CrashDetectionScreen from '../screens/CrashDetectionScreen';
 import OnboardingScreen from '../screens/OnboardingScreen';
+import BleBroadcastScreen from '../screens/BleBroadcastScreen';
+import BleReceiverScreen from '../screens/BleReceiverScreen';
 
 // 🔥 IMPORT NAV REF
 import { navigationRef } from '../services/NavigationService';
@@ -22,6 +24,9 @@ export type RootStackParamList = {
   CrashDetectionScreen: {
     impactForce?: number;
   };
+
+  BleBroadcast: undefined;
+  BleReceiver: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -70,6 +75,18 @@ export default function AppNavigator({ initialRouteName }: AppNavigatorProps) {
           <Stack.Screen
             name="CrashDetectionScreen"
             component={CrashDetectionScreen}
+          />
+
+          {/* 🔵 BLE BROADCAST (SENDER) */}
+          <Stack.Screen
+            name="BleBroadcast"
+            component={BleBroadcastScreen}
+          />
+
+          {/* 🟢 BLE RECEIVER */}
+           <Stack.Screen
+            name="BleReceiver"
+            component={BleReceiverScreen}
           />
 
         </Stack.Navigator>

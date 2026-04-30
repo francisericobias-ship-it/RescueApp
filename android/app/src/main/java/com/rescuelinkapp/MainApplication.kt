@@ -18,6 +18,8 @@ class MainApplication : Application(), ReactApplication {
           add(CrashPackage())
           // Packages that cannot be autolinked yet can be added manually here, for example:
           // add(MyReactNativePackage())
+
+          add(BLEAdvertiserPackage())
         },
     )
   }

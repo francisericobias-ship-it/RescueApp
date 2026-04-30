@@ -1,4 +1,4 @@
- // HomeScreen.tsx (Fully Fixed + Typed + No Render Errors)
+// HomeScreen.tsx - Modern Emergency Healthcare UI
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
@@ -16,7 +16,8 @@ import {
   ActivityIndicator,
   Platform,
   Image,
-  Button,
+  StatusBar,
+  Dimensions,
 } from 'react-native';
 
 import { useFocusEffect } from '@react-navigation/native';
@@ -32,6 +33,8 @@ import { playSOSSound, playCrashSound, playDrivingSound } from '../services/soun
 import { startMeshScan, stopMeshScan, broadcastMeshPayload } from '../services/bleMeshService';
 import { requestLocationPermission } from '../utils/LocationPermissions';
 import { launchCamera, launchImageLibrary, ImagePickerResponse, Asset } from 'react-native-image-picker';
+
+const { width, height } = Dimensions.get('window');
 
 /* ---------------- TYPES ---------------- */
 type Coords = {
@@ -55,61 +58,77 @@ export default function HomeScreen({ navigation }: any) {
   const [description, setDescription] = useState<string>('');
   const [selectedImage, setSelectedImage] = useState<Asset | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [locationCoords, setLocationCoords] = useState<Coords | null>(null);
 
   /* ---------------- REFS ---------------- */
   const sosScale = useRef(new Animated.Value(1)).current;
+  const pulseAnimation = useRef<Animated.CompositeAnimation | null>(null);
   const watchId = useRef<number | null>(null);
   const autoOffTimer = useRef<NodeJS.Timeout | null>(null);
   const crashSubscription = useRef<any>(null);
-  const timeNow = new Date().toLocaleTimeString();
-  /* ---------------- NOTIFICATIONS ---------------- */
+
+  /* ---------------- ANIMATIONS ---------------- */
   const handlePressIn = () => {
-  Animated.spring(sosScale, {
-    toValue: 0.9,
-    useNativeDriver: true,
-  }).start();
-};
+    Animated.spring(sosScale, {
+      toValue: 0.95,
+      friction: 3,
+      tension: 40,
+      useNativeDriver: true,
+    }).start();
+  };
 
-const handlePressOut = () => {
-  Animated.spring(sosScale, {
-    toValue: 1,
-    useNativeDriver: true,
-  }).start();
-};
+  const handlePressOut = () => {
+    Animated.spring(sosScale, {
+      toValue: 1,
+      friction: 3,
+      tension: 40,
+      useNativeDriver: true,
+    }).start();
+  };
 
-const startPulse = () => {
-  Animated.loop(
-    Animated.sequence([
-      Animated.timing(sosScale, {
-        toValue: 1.05,
-        duration: 500,
+  const startPulse = () => {
+    if (pulseAnimation.current) {
+      pulseAnimation.current.stop();
+    }
+    pulseAnimation.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(sosScale, {
+          toValue: 1.03,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sosScale, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    pulseAnimation.current.start();
+  };
+
+  const stopPulse = () => {
+    if (pulseAnimation.current) {
+      pulseAnimation.current.stop();
+      Animated.spring(sosScale, {
+        toValue: 1,
         useNativeDriver: true,
-      }),
-      Animated.timing(sosScale, {
-        toValue: 0.95,
-        duration: 500,
-        useNativeDriver: true,
-      }),
-    ])
-  ).start();
-};
+      }).start();
+    }
+  };
 
-
-
-
+  /* ---------------- NOTIFICATIONS ---------------- */
   useFocusEffect(useCallback(() => {
     PushNotification.configure({
-  onNotification: function (notification) {
-    console.log('NOTIF:', notification);
-
-    if (notification.action === 'Cancel') {
-      console.log('❌ Cancel pressed from notification');
-
-      global.cancelCrashCountdown?.();
-    }
-  },
-  requestPermissions: Platform.OS === 'ios',
-});
+      onNotification: function (notification) {
+        console.log('NOTIF:', notification);
+        if (notification.action === 'Cancel') {
+          console.log('❌ Cancel pressed from notification');
+          global.cancelCrashCountdown?.();
+        }
+      },
+      requestPermissions: Platform.OS === 'ios',
+    });
 
     if (Platform.OS === 'android') {
       PushNotification.createChannel({
@@ -138,20 +157,35 @@ const startPulse = () => {
     return unsubscribe;
   }, []);
 
-  /* ---------------- GPS SPEED ---------------- */
+  /* ---------------- GPS & LOCATION ---------------- */
   useEffect(() => {
     const init = async () => {
       const granted = await requestLocationPermission();
       if (!granted) return;
+
+      // Get initial position
+      Geolocation.getCurrentPosition(
+        (pos) => {
+          setLocationCoords({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          });
+        },
+        (err) => console.log(err.message)
+      );
 
       watchId.current = Geolocation.watchPosition(
         (pos) => {
           const gpsSpeed = pos.coords.speed;
           const speedKmh = gpsSpeed ? gpsSpeed * 3.6 : 0;
           setSpeed(prev => Math.round((prev + speedKmh) / 2));
+          setLocationCoords({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          });
         },
         (err) => console.log(err.message),
-        { enableHighAccuracy: true, interval: 2000 }
+        { enableHighAccuracy: true, interval: 2000, distanceFilter: 5 }
       );
     };
 
@@ -172,11 +206,11 @@ const startPulse = () => {
       notify('Driving Mode', 'Activated', speed);
 
       saveHistoryEvent({
-    id: `${Date.now()}`,
-    type: 'DRIVING_ON',
-    timestamp: Date.now(),
-    speed,
-  });
+        id: `${Date.now()}`,
+        type: 'DRIVING_ON',
+        timestamp: Date.now(),
+        speed,
+      });
 
       if (!isOnline) startMeshScan();
     }
@@ -187,13 +221,18 @@ const startPulse = () => {
         notify('Driving Mode', 'Deactivated');
 
         saveHistoryEvent({
-  id: `${Date.now()}`,
-  type: 'DRIVING_OFF',
-  timestamp: Date.now(),
-  speed,
-});
+          id: `${Date.now()}`,
+          type: 'DRIVING_OFF',
+          timestamp: Date.now(),
+          speed,
+        });
         autoOffTimer.current = null;
       }, AUTO_OFF_DELAY);
+    }
+
+    if (speed >= SPEED_THRESHOLD && autoOffTimer.current) {
+      clearTimeout(autoOffTimer.current);
+      autoOffTimer.current = null;
     }
 
     return () => {
@@ -210,19 +249,17 @@ const startPulse = () => {
     crashSubscription.current = accelerometer.pipe(
       map(({ x, y, z }) => Math.sqrt(x * x + y * y + z * z) / 9.81)
     ).subscribe((gForce: number) => {
-
       if (gForce < CRASH_G_THRESHOLD) return;
 
       playCrashSound();
 
-      /* 🔥 ADD THIS */
-saveHistoryEvent({
-  id: `${Date.now()}`,
-  type: 'CRASH',
-  timestamp: Date.now(),
-  speed,
-  description: `Impact force: ${gForce.toFixed(2)}G`,
-});
+      saveHistoryEvent({
+        id: `${Date.now()}`,
+        type: 'CRASH',
+        timestamp: Date.now(),
+        speed,
+        description: `Impact force: ${gForce.toFixed(2)}G`,
+      });
 
       const payload = { type: 'CRASH', impactForce: gForce, timestamp: Date.now() };
 
@@ -242,9 +279,9 @@ saveHistoryEvent({
     let result: ImagePickerResponse;
 
     if (type === 'camera') {
-      result = await launchCamera({ mediaType: 'photo' });
+      result = await launchCamera({ mediaType: 'photo', quality: 0.8 });
     } else {
-      result = await launchImageLibrary({ mediaType: 'photo' });
+      result = await launchImageLibrary({ mediaType: 'photo', quality: 0.8 });
     }
 
     if (!result.didCancel && result.assets && result.assets.length > 0) {
@@ -264,182 +301,315 @@ saveHistoryEvent({
       name: selectedImage.fileName || 'photo.jpg',
     } as any);
 
-    const res = await fetch('https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts/upload-image', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: formData,
-    });
+    try {
+      const res = await fetch('https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts/upload-image', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
 
-    const data = await res.json();
-    return res.ok ? data.url : null;
+      const data = await res.json();
+      return res.ok ? data.url : null;
+    } catch (error) {
+      console.log('Upload error:', error);
+      return null;
+    }
   };
 
-  /* ---------------- SOS ---------------- */
+  /* ---------------- SOS HANDLER ---------------- */
   const handleSOS = async () => {
-  if (!title || !description) {
-    return Alert.alert('Error', 'Fill all fields');
-  }
-
-  setSending(true);
-
-  try {
-    const token = await AsyncStorage.getItem('token');
-
-    const coords = await new Promise(resolve => {
-      Geolocation.getCurrentPosition(
-        pos => resolve({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude
-        }),
-        () => resolve(null)
-      );
-    });
-
-    
-
-    if (!coords) {
-      return Alert.alert('Error', 'Location failed');
+    if (!title.trim() || !description.trim()) {
+      return Alert.alert('Missing Information', 'Please fill in both title and description');
     }
 
-    const imageUrl = selectedImage ? await uploadImage() : null;
+    setSending(true);
 
-    const payload = {
-      alert_type: 'accident',
-      severity: 'high',
-      title,
-      description,
-      location: 'User current location', // ✅ REQUIRED
-      latitude: coords.lat,
-      longitude: coords.lng,
-      image_url: imageUrl, // ✅ FIXED
-    };
-
-    const res = await fetch(
-      'https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
+    try {
+      const token = await AsyncStorage.getItem('token');
+      
+      let coords = locationCoords;
+      if (!coords) {
+        coords = await new Promise<Coords | null>((resolve) => {
+          Geolocation.getCurrentPosition(
+            pos => resolve({
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude
+            }),
+            () => resolve(null),
+            { timeout: 10000 }
+          );
+        });
       }
-    );
 
-    const data = await res.json();
+      if (!coords) {
+        setSending(false);
+        return Alert.alert('Location Error', 'Unable to get your location. Please check GPS settings.');
+      }
 
-    console.log("STATUS:", res.status);
-    console.log("RESPONSE:", data);
+      const imageUrl = selectedImage ? await uploadImage() : null;
 
-    if (!res.ok) {
-      throw new Error('Failed request');
+      const payload = {
+        alert_type: 'accident',
+        severity: 'high',
+        title: title.trim(),
+        description: description.trim(),
+        location: `${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}`,
+        latitude: coords.lat,
+        longitude: coords.lng,
+        image_url: imageUrl,
+        timestamp: new Date().toISOString(),
+      };
+
+      const res = await fetch(
+        'https://rescuelink-backend-j0gz.onrender.com/api/v1/alerts',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to send SOS');
+      }
+
+      await saveHistoryEvent({
+        id: `${Date.now()}`,
+        type: 'SOS',
+        timestamp: Date.now(),
+        latitude: coords.lat,
+        longitude: coords.lng,
+        description: title.trim(),
+      });
+
+      const timeNow = new Date().toLocaleTimeString();
+      Alert.alert(
+        '🚨 SOS Sent Successfully',
+        `Your emergency alert has been dispatched.\n\n📍 Location: ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}\n⏰ Time: ${timeNow}\n\nEmergency services have been notified.`,
+        [{ text: 'OK', onPress: () => console.log('SOS confirmed') }]
+      );
+
+      setModalVisible(false);
+      setTitle('');
+      setDescription('');
+      setSelectedImage(null);
+      stopPulse();
+
+    } catch (err: any) {
+      console.log('SOS Error:', err);
+      Alert.alert('Error', err.message || 'Failed to send SOS. Please try again.');
+    } finally {
+      setSending(false);
     }
+  };
 
+  const getSpeedColor = () => {
+    if (speed < 30) return '#34C759';
+    if (speed < 60) return '#FF9F0A';
+    return '#FF3B30';
+  };
 
-    await saveHistoryEvent({
-     id: `${Date.now()}`,
-     type: 'SOS',
-     timestamp: Date.now(),
-     latitude: coords.lat,
-     longitude: coords.lng,
-     description: title,
-});
+  const getSpeedWarning = () => {
+    if (speed < 30) return { text: 'Normal', icon: '✓' };
+    if (speed < 60) return { text: 'Caution', icon: '⚠️' };
+    return { text: 'High Speed', icon: '⚠️' };
+  };
 
-    Alert.alert(
-  'SOS Sent 🚨',
-  `Your report has been sent successfully.\n\n📍 Location: ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}\n⏰ Time: ${timeNow}`
-);
-
-    setModalVisible(false);
-    setTitle('');
-    setDescription('');
-    setSelectedImage(null);
-
-  } catch (err) {
-    console.log(err);
-    Alert.alert('Error', 'Failed to send SOS');
-  } finally {
-    setSending(false);
-  }
-};
-
-  /* ---------------- UI ---------------- */
+  /* ---------------- UI RENDER ---------------- */
   return (
-    <ScrollView style={styles.container}>
+    <>
+      <StatusBar barStyle="light-content" backgroundColor="#0A3C5F" />
+      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+        
+        {/* Header Section */}
+        <View style={styles.headerSection}>
+          <Text style={styles.headerTitle}>RescueLink</Text>
+          <View style={styles.statusContainer}>
+            <View style={[styles.statusDot, { backgroundColor: isOnline ? '#34C759' : '#FF9F0A' }]} />
+            <Text style={styles.statusText}>
+              {isOnline ? 'Emergency Services Connected' : 'Offline Mesh Mode Active'}
+            </Text>
+          </View>
+        </View>
 
-      <Text style={styles.header}>RescueLink</Text>
+        {/* Speed Card */}
+        <View style={styles.speedCard}>
+          <View style={styles.speedHeader}>
+            <Text style={styles.cardLabel}>Current Speed</Text>
+            <View style={[styles.warningBadge, { backgroundColor: getSpeedColor() + '20' }]}>
+              <Text style={styles.warningIcon}>{getSpeedWarning().icon}</Text>
+              <Text style={[styles.warningText, { color: getSpeedColor() }]}>
+                {getSpeedWarning().text}
+              </Text>
+            </View>
+          </View>
+          <Text style={[styles.speedValue, { color: getSpeedColor() }]}>{Math.round(speed)}</Text>
+          <Text style={styles.speedUnit}>km/h</Text>
+          <View style={styles.speedBarContainer}>
+            <View style={[styles.speedBar, { width: `${Math.min((speed / 140) * 100, 100)}%`, backgroundColor: getSpeedColor() }]} />
+          </View>
+        </View>
 
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Speed</Text>
-        <Text style={styles.speed}>{speed} km/h</Text>
-      </View>
+        {/* Location Card */}
+        <View style={styles.infoCard}>
+          <View style={styles.infoRow}>
+            <Text style={styles.infoIcon}>📍</Text>
+            <View style={styles.infoContent}>
+              <Text style={styles.infoLabel}>Current Location</Text>
+              <Text style={styles.infoValue}>
+                {locationCoords 
+                  ? `${locationCoords.lat.toFixed(4)}°, ${locationCoords.lng.toFixed(4)}°`
+                  : 'Acquiring location...'}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.divider} />
+          <View style={styles.infoRow}>
+            <Text style={styles.infoIcon}>📶</Text>
+            <View style={styles.infoContent}>
+              <Text style={styles.infoLabel}>Network Status</Text>
+              <Text style={[styles.infoValue, { color: isOnline ? '#34C759' : '#FF9F0A' }]}>
+                {isOnline ? 'Connected to emergency dispatch' : 'Mesh peer-to-peer mode'}
+              </Text>
+            </View>
+          </View>
+        </View>
 
-      <View style={styles.card}>
-        <Text style={[styles.network, { color: isOnline ? 'green' : 'orange' }]}>
-          {isOnline ? 'Online Mode' : 'Offline Mesh Mode'}
-        </Text>
-      </View>
+        {/* SOS Button */}
+        <Pressable
+          delayLongPress={3000}
+          onPressIn={() => {
+            handlePressIn();
+            startPulse();
+          }}
+          onPressOut={() => {
+            handlePressOut();
+            stopPulse();
+          }}
+          onLongPress={() => {
+            playSOSSound();
+            setModalVisible(true);
+          }}
+        >
+          <Animated.View style={[styles.sosButton, { transform: [{ scale: sosScale }] }]}>
+            <Text style={styles.sosText}>🚨 SOS</Text>
+            <View style={styles.sosTimerRing}>
+              <Text style={styles.sosSub}>HOLD FOR 3 SECONDS</Text>
+            </View>
+          </Animated.View>
+        </Pressable>
 
-      <Pressable
-  delayLongPress={3000}
-  onPressIn={() => {
-    handlePressIn();
-    startPulse(); // optional
-  }}
-  onPressOut={handlePressOut}
-  onLongPress={() => {
-    playSOSSound();
-    setModalVisible(true);
-  }}
->
-  <Animated.View style={[styles.sosButton, { transform: [{ scale: sosScale }] }]}>
-    <Text style={styles.sosText}>SOS</Text>
-    <Text style={styles.sosSub}>Hold 3 seconds</Text>
-  </Animated.View>
-</Pressable>
+        {/* Driving Mode Toggle */}
+        <View style={styles.toggleCard}>
+          <View style={styles.toggleLeft}>
+            <Text style={styles.toggleIcon}>🚗</Text>
+            <View>
+              <Text style={styles.toggleTitle}>Driving Mode</Text>
+              <Text style={styles.toggleSubtitle}>
+                {drivingMode ? 'Auto-crash detection active' : 'Manual mode only'}
+              </Text>
+            </View>
+          </View>
+          <Switch 
+            value={drivingMode} 
+            onValueChange={setDrivingMode}
+            trackColor={{ false: '#E5E5EA', true: '#FF3B30' }}
+            thumbColor="#FFFFFF"
+            ios_backgroundColor="#E5E5EA"
+          />
+        </View>
 
-      <View style={styles.toggle}>
-        <Text>Driving Mode</Text>
-        <Switch value={drivingMode} onValueChange={setDrivingMode} />
-      </View>
+        {/* Info Note */}
+        {drivingMode && (
+          <View style={styles.infoNote}>
+            <Text style={styles.infoNoteText}>
+              ⚡ Crash detection active • Emergency alerts will trigger automatically
+            </Text>
+          </View>
+        )}
 
-      <Modal visible={modalVisible} animationType="slide">
+      </ScrollView>
+
+      {/* SOS Modal */}
+      <Modal 
+        visible={modalVisible} 
+        animationType="slide" 
+        presentationStyle="pageSheet"
+        onRequestClose={() => setModalVisible(false)}
+      >
         <View style={styles.modalContainer}>
-
-          <Text style={styles.modalTitle}>Manual SOS</Text>
-
-          <TextInput style={styles.input} placeholder="Title" value={title} onChangeText={setTitle} />
-          <TextInput style={[styles.input, styles.textArea]} placeholder="Description" value={description} onChangeText={setDescription} multiline />
-
-          <View style={styles.imageButtonsContainer}>
-            <TouchableOpacity style={styles.imageButton} onPress={() => pickImage('gallery')}>
-              <Text style={styles.imageButtonText}>Gallery</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.imageButton} onPress={() => pickImage('camera')}>
-              <Text style={styles.imageButtonText}>Camera</Text>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>🚨 Emergency Alert</Text>
+            <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.modalClose}>
+              <Text style={styles.modalCloseText}>✕</Text>
             </TouchableOpacity>
           </View>
 
-          {selectedImage && (
-            <Image source={{ uri: selectedImage.uri }} style={styles.thumbnail} />
-          )}
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <Text style={styles.modalSubtitle}>Emergency Details</Text>
 
-          {sending ? (
-            <ActivityIndicator size="large" color="red" />
-          ) : (
-            <TouchableOpacity style={styles.submitBtn} onPress={handleSOS}>
-              <Text style={styles.submitText}>SUBMIT SOS</Text>
+            <TextInput 
+              style={styles.input} 
+              placeholder="Incident Title (e.g., Car Accident, Medical Emergency)" 
+              placeholderTextColor="#8E8E93"
+              value={title} 
+              onChangeText={setTitle} 
+              maxLength={100}
+            />
+
+            <TextInput 
+              style={[styles.input, styles.textArea]} 
+              placeholder="Describe the emergency (location, injuries, vehicles involved...)" 
+              placeholderTextColor="#8E8E93"
+              value={description} 
+              onChangeText={setDescription} 
+              multiline 
+              maxLength={500}
+            />
+
+            <Text style={styles.mediaLabel}>Add Evidence (Optional)</Text>
+            <View style={styles.imageButtonsContainer}>
+              <TouchableOpacity style={[styles.imageButton, styles.galleryBtn]} onPress={() => pickImage('gallery')}>
+                <Text style={styles.imageButtonText}>📷 Gallery</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.imageButton, styles.cameraBtn]} onPress={() => pickImage('camera')}>
+                <Text style={styles.imageButtonText}>📸 Camera</Text>
+              </TouchableOpacity>
+            </View>
+
+            {selectedImage && (
+              <View style={styles.imagePreview}>
+                <Image source={{ uri: selectedImage.uri }} style={styles.thumbnail} />
+                <TouchableOpacity onPress={() => setSelectedImage(null)} style={styles.removeImage}>
+                  <Text style={styles.removeImageText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {sending ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#FF3B30" />
+                <Text style={styles.loadingText}>Dispatching Emergency Services...</Text>
+              </View>
+            ) : (
+              <TouchableOpacity style={styles.submitBtn} onPress={handleSOS}>
+                <Text style={styles.submitText}>SEND EMERGENCY ALERT</Text>
+                <Text style={styles.submitSubtext}>Emergency services will be notified immediately</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setModalVisible(false)}>
+              <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
-          )}
-
-          <TouchableOpacity style={styles.cancelBtn} onPress={() => setModalVisible(false)}>
-            <Text>Cancel</Text>
-          </TouchableOpacity>
-
+          </ScrollView>
         </View>
       </Modal>
-
-    </ScrollView>
+    </>
   );
 }
 
@@ -447,135 +617,439 @@ saveHistoryEvent({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
-    backgroundColor: '#f9fafb'
+    backgroundColor: '#F2F2F7',
   },
 
-  header: {
-    fontSize: 26,
-    fontWeight: '700',
+  headerSection: {
+    backgroundColor: '#0A3C5F',
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingBottom: 24,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+  },
+
+  headerTitle: {
+    fontSize: 34,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
+    marginBottom: 12,
+  },
+
+  statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+
+  statusText: {
+    color: '#E5E5EA',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+
+  speedCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+    margin: 16,
+    marginTop: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+
+  speedHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+
+  cardLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#8E8E93',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
+  warningBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+
+  warningIcon: {
+    fontSize: 12,
+    marginRight: 4,
+  },
+
+  warningText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  speedValue: {
+    fontSize: 72,
+    fontWeight: '800',
     textAlign: 'center',
-    marginBottom: 20
+    letterSpacing: -2,
+    marginBottom: 4,
   },
 
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-    elevation: 3
-  },
-
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '600'
-  },
-
-  speed: {
-    fontSize: 48,
-    fontWeight: '700',
-    color: '#e74c3c',
-    textAlign: 'center'
-  },
-
-  network: {
+  speedUnit: {
     fontSize: 18,
-    fontWeight: 'bold',
-    textAlign: 'center'
+    color: '#8E8E93',
+    textAlign: 'center',
+    marginBottom: 16,
+    fontWeight: '500',
+  },
+
+  speedBarContainer: {
+    height: 4,
+    backgroundColor: '#E5E5EA',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+
+  speedBar: {
+    height: '100%',
+    borderRadius: 2,
+  },
+
+  infoCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+
+  infoIcon: {
+    fontSize: 24,
+    marginRight: 12,
+    width: 32,
+  },
+
+  infoContent: {
+    flex: 1,
+  },
+
+  infoLabel: {
+    fontSize: 13,
+    color: '#8E8E93',
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+
+  infoValue: {
+    fontSize: 15,
+    color: '#1C1C1E',
+    fontWeight: '600',
+  },
+
+  divider: {
+    height: 1,
+    backgroundColor: '#E5E5EA',
+    marginVertical: 8,
   },
 
   sosButton: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 100,
-    paddingVertical: 24,
-    alignItems: 'center',
-    marginVertical: 20
+    marginHorizontal: 16,
+    marginVertical: 8,
+    borderRadius: 30,
+    overflow: 'hidden',
+    shadowColor: '#FF3B30',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+    backgroundColor: '#FF3B30',
   },
 
   sosText: {
-    color: '#fff',
-    fontSize: 48,
-    fontWeight: '700'
+    color: '#FFFFFF',
+    fontSize: 56,
+    fontWeight: '800',
+    letterSpacing: 2,
+    textAlign: 'center',
+    paddingTop: 32,
+  },
+
+  sosTimerRing: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    alignSelf: 'center',
+    marginBottom: 28,
+    marginTop: 8,
   },
 
   sosSub: {
-    color: '#fff',
-    fontSize: 14
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 1,
   },
 
-  toggle: {
+  toggleCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    marginHorizontal: 16,
+    marginVertical: 8,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    backgroundColor: '#fff',
-    padding: 16,
-    borderRadius: 16,
-    marginTop: 20
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+
+  toggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  toggleIcon: {
+    fontSize: 28,
+    marginRight: 12,
+  },
+
+  toggleTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    marginBottom: 2,
+  },
+
+  toggleSubtitle: {
+    fontSize: 13,
+    color: '#8E8E93',
+  },
+
+  infoNote: {
+    backgroundColor: '#FFE5E5',
+    borderRadius: 12,
+    padding: 12,
+    marginHorizontal: 16,
+    marginVertical: 8,
+    marginBottom: 24,
+  },
+
+  infoNoteText: {
+    color: '#FF3B30',
+    fontSize: 13,
+    fontWeight: '500',
+    textAlign: 'center',
   },
 
   modalContainer: {
     flex: 1,
+    backgroundColor: '#F2F2F7',
+  },
+
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     padding: 20,
-    backgroundColor: '#fff'
+    paddingTop: Platform.OS === 'ios' ? 60 : 20,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5EA',
   },
 
   modalTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 20
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#FF3B30',
+  },
+
+  modalClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F2F2F7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  modalCloseText: {
+    fontSize: 20,
+    color: '#8E8E93',
+  },
+
+  modalSubtitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    marginTop: 24,
+    marginBottom: 16,
+    marginHorizontal: 20,
   },
 
   input: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginHorizontal: 20,
+    marginBottom: 12,
+    fontSize: 16,
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 12
+    borderColor: '#E5E5EA',
   },
 
   textArea: {
-    height: 100,
-    textAlignVertical: 'top'
+    height: 120,
+    textAlignVertical: 'top',
   },
 
-  submitBtn: {
-    backgroundColor: 'red',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 10
-  },
-
-  submitText: {
-    color: '#fff',
-    fontWeight: 'bold'
-  },
-
-  cancelBtn: {
-    marginTop: 10,
-    alignItems: 'center'
-  },
-
-  thumbnail: {
-    width: 100,
-    height: 100,
-    borderRadius: 8,
-    alignSelf: 'center',
-    marginVertical: 10
+  mediaLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    marginTop: 8,
+    marginBottom: 12,
+    marginHorizontal: 20,
   },
 
   imageButtonsContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginVertical: 10
+    justifyContent: 'space-between',
+    marginHorizontal: 20,
+    marginBottom: 16,
   },
 
   imageButton: {
-    backgroundColor: '#007bff',
-    padding: 10,
-    borderRadius: 8
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginHorizontal: 6,
+  },
+
+  galleryBtn: {
+    backgroundColor: '#007AFF',
+  },
+
+  cameraBtn: {
+    backgroundColor: '#5856D6',
   },
 
   imageButtonText: {
-    color: '#fff'
-  }
-}); 
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+
+  imagePreview: {
+    alignItems: 'center',
+    marginVertical: 16,
+    position: 'relative',
+  },
+
+  thumbnail: {
+    width: 150,
+    height: 150,
+    borderRadius: 12,
+  },
+
+  removeImage: {
+    position: 'absolute',
+    top: -8,
+    right: width / 2 - 75,
+    backgroundColor: '#FF3B30',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+
+  removeImageText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+
+  loadingContainer: {
+    alignItems: 'center',
+    marginVertical: 24,
+  },
+
+  loadingText: {
+    marginTop: 12,
+    color: '#8E8E93',
+    fontSize: 14,
+  },
+
+  submitBtn: {
+    backgroundColor: '#FF3B30',
+    borderRadius: 14,
+    padding: 18,
+    marginHorizontal: 20,
+    marginTop: 20,
+    alignItems: 'center',
+    shadowColor: '#FF3B30',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+
+  submitText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+
+  submitSubtext: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+  },
+
+  cancelBtn: {
+    padding: 16,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+
+  cancelText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+});

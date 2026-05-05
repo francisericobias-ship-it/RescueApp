@@ -1,3 +1,5 @@
+// App.tsx - Complete with all permissions for Android 11 and 14
+
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
@@ -5,6 +7,7 @@ import {
   PermissionsAndroid,
   Platform,
   Alert,
+  Linking,
 } from 'react-native';
 
 import AppNavigator from './src/navigation/AppNavigator';
@@ -31,32 +34,199 @@ export default function App() {
 
   (global as any).navigationRef = navigationRef;
 
-  /* ---------------- BLUETOOTH PERMISSION ---------------- */
-  const checkBluetoothPermissionsAndStatus = async () => {
-    if (Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(
+  /* ---------------- REQUEST ALL PERMISSIONS (Android 11 & 14 compatible) ---------------- */
+  const requestPermissions = async () => {
+    if (Platform.OS !== 'android') return true;
+
+    try {
+      const permissionsToRequest = [];
+
+      // ========== LOCATION PERMISSIONS (Required for all Android versions) ==========
+      permissionsToRequest.push(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION
       );
 
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        Alert.alert('Permission Denied', 'Bluetooth permission is required.');
+      // ========== CAMERA PERMISSION ==========
+      permissionsToRequest.push(
+        PermissionsAndroid.PERMISSIONS.CAMERA
+      );
+
+      // ========== NOTIFICATION PERMISSION (Android 13+) ==========
+      if (Platform.Version >= 33) {
+        permissionsToRequest.push(
+          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+        );
+      }
+
+      // ========== BLUETOOTH PERMISSIONS ==========
+      if (Platform.Version >= 31) {
+        // Android 12+ (API 31+) needs separate Bluetooth permissions
+        permissionsToRequest.push(
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE
+        );
+      } else {
+        // Android 11 and below - traditional Bluetooth permissions
+        permissionsToRequest.push(
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADMIN
+        );
+      }
+
+      // Request all permissions at once
+      const granted = await PermissionsAndroid.requestMultiple(permissionsToRequest);
+
+      // Log results
+      let allGranted = true;
+      Object.entries(granted).forEach(([permission, result]) => {
+        const isGranted = result === PermissionsAndroid.RESULTS.GRANTED;
+        console.log(`${permission}: ${isGranted ? '✅' : '❌'}`);
+        if (!isGranted) allGranted = false;
+      });
+
+      // Show alert for important missing permissions
+      if (!allGranted) {
+        Alert.alert(
+          'Permissions Needed',
+          'Some features may not work properly without permissions. You can enable them in Settings.',
+          [
+            { text: 'Later', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() }
+          ]
+        );
+      }
+
+      console.log('✅ All permissions requested');
+      return allGranted;
+      
+    } catch (err) {
+      console.log('Permission error:', err);
+      return false;
+    }
+  };
+
+  /* ---------------- REQUEST PERMISSIONS SEQUENTIALLY (Better UX) ---------------- */
+  const requestPermissionsSequentially = async () => {
+    if (Platform.OS !== 'android') return true;
+
+    try {
+      // 1. Location permission (Most important)
+      const locationGranted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        {
+          title: 'Location Permission',
+          message: 'RescueLink needs location to send your emergency location to responders.',
+          buttonPositive: 'Allow',
+          buttonNegative: 'Deny',
+        }
+      );
+
+      // 2. Bluetooth permissions based on Android version
+      if (Platform.Version >= 31) {
+        // Android 12+
+        await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          {
+            title: 'Bluetooth Scan',
+            message: 'RescueLink needs Bluetooth to scan for nearby emergencies.',
+            buttonPositive: 'Allow',
+          }
+        );
+        
+        await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          {
+            title: 'Bluetooth Connect',
+            message: 'RescueLink needs Bluetooth to connect to emergency mesh network.',
+            buttonPositive: 'Allow',
+          }
+        );
+        
+        await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE,
+          {
+            title: 'Bluetooth Advertising',
+            message: 'RescueLink needs Bluetooth to make your device discoverable during emergencies.',
+            buttonPositive: 'Allow',
+          }
+        );
+      } else {
+        // Android 11 and below
+        await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH,
+          {
+            title: 'Bluetooth Permission',
+            message: 'RescueLink needs Bluetooth for emergency mesh network.',
+            buttonPositive: 'Allow',
+          }
+        );
+      }
+
+      // 3. Camera permission
+      await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.CAMERA,
+        {
+          title: 'Camera Permission',
+          message: 'RescueLink needs camera to send photo evidence during emergencies.',
+          buttonPositive: 'Allow',
+        }
+      );
+
+      // 4. Notification permission (Android 13+)
+      if (Platform.Version >= 33) {
+        await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+          {
+            title: 'Notification Permission',
+            message: 'RescueLink sends alerts for emergencies.',
+            buttonPositive: 'Allow',
+          }
+        );
+      }
+
+      console.log('✅ All permissions requested sequentially');
+      return locationGranted === PermissionsAndroid.RESULTS.GRANTED;
+      
+    } catch (err) {
+      console.log('Permission error:', err);
+      return false;
+    }
+  };
+
+  /* ---------------- CHECK BLUETOOTH STATE ---------------- */
+  const checkBluetoothAndPrompt = async () => {
+    try {
+      const state = await bleManager.state();
+      console.log('Bluetooth state:', state);
+
+      if (state !== 'PoweredOn') {
+        Alert.alert(
+          '🔵 Enable Bluetooth',
+          'RescueLink needs Bluetooth for:\n\n• Emergency mesh network\n• Crash detection\n• Nearby device discovery\n\nPlease enable Bluetooth to use all features.',
+          [
+            { 
+              text: 'Not Now', 
+              style: 'cancel',
+              onPress: () => console.log('User skipped Bluetooth')
+            },
+            { 
+              text: 'Open Settings', 
+              onPress: () => {
+                Linking.sendIntent('android.settings.BLUETOOTH_SETTINGS');
+              }
+            }
+          ]
+        );
         return false;
       }
+      
+      return true;
+    } catch (error) {
+      console.log('Bluetooth check error:', error);
+      return false;
     }
-
-    const state = await bleManager.state();
-
-    if (state !== 'PoweredOn') {
-      try {
-        await bleManager.enable();
-        return true;
-      } catch {
-        Alert.alert('Bluetooth Error', 'Enable Bluetooth manually.');
-        return false;
-      }
-    }
-
-    return true;
   };
 
   /* ---------------- BLE SCAN ---------------- */
@@ -85,16 +255,19 @@ export default function App() {
     let mounted = true;
 
     const init = async () => {
-      const ok = await checkBluetoothPermissionsAndStatus();
-
+      // Request all permissions
+      await requestPermissionsSequentially();
+      
+      // Check Bluetooth status and prompt
+      const bluetoothReady = await checkBluetoothAndPrompt();
+      
       if (!mounted) return;
 
-      if (ok) {
+      if (bluetoothReady) {
         startDeviceScan();
-        checkAppState();
-      } else {
-        setIsLoading(false);
       }
+      
+      checkAppState();
     };
 
     init();
@@ -222,8 +395,8 @@ export default function App() {
   /* ---------------- LOADING ---------------- */
   if (isLoading) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#e74c3c" />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F2F2F7' }}>
+        <ActivityIndicator size="large" color="#FF3B30" />
       </View>
     );
   }

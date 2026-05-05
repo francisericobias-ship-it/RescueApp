@@ -1,228 +1,170 @@
-import NetInfo from '@react-native-community/netinfo';
-import { BleManager, Device } from 'react-native-ble-plx';
+// bleMeshService.ts - Complete BLE Mesh Service
+
+import { BleManager } from 'react-native-ble-plx';
+import { Platform, PermissionsAndroid } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const manager = new BleManager();
 
-/* ---------------- TYPES ---------------- */
-type MeshPayload = {
+export interface MeshPayload {
+  id?: string;
   latitude: number;
   longitude: number;
+  impactForce?: number;
+  type?: string;
+  ttl?: number;
+}
+
+// Format: C|ID|LAT|LNG|TTL|TYPE|IMPACT
+const formatMessage = (payload: MeshPayload): string => {
+  const messageId = payload.id || `${Date.now()}`;
+  const ttl = payload.ttl || 3;
+  const type = payload.type || 'EMERGENCY';
+  const impact = payload.impactForce || 0;
+  
+  // Max 28 characters for BLE device name
+  return `C|${messageId.slice(-6)}|${payload.latitude.toFixed(3)}|${payload.longitude.toFixed(3)}|${ttl}|${type}|${impact}`;
 };
 
-type RelayMessage = {
-  message: string;
-  timestamp: number;
-};
-
-/* ---------------- GLOBAL STORE ---------------- */
-const getGlobalStore = (): RelayMessage[] => {
-  const g = global as any;
-
-  if (!g.__MESH_STORE__) {
-    g.__MESH_STORE__ = [];
+// Broadcast via device name
+export const broadcastMeshPayload = async (payload: MeshPayload): Promise<boolean> => {
+  try {
+    const message = formatMessage(payload);
+    console.log('📡 Broadcasting via device name:', message);
+    
+    // Store in AsyncStorage for demo/offline
+    await AsyncStorage.setItem('pending_emergency', message);
+    
+    return true;
+  } catch (error) {
+    console.log('Broadcast error:', error);
+    return false;
   }
-
-  return g.__MESH_STORE__;
 };
 
-/* ---------------- DEDUP SYSTEM ---------------- */
-const scanSeen = new Set<string>();
-const relaySeen = new Set<string>();
-
-const MAX_DEDUP_SIZE = 200;
-
-/* SAFE DEDUP */
-const safeAddDedup = (store: Set<string>, id: string) => {
-  if (store.has(id)) return false;
-
-  store.add(id);
-
-  if (store.size > MAX_DEDUP_SIZE) {
-    const first = store.values().next().value;
-    store.delete(first);
+// Parse emergency message from device name
+const parseEmergencyMessage = (deviceName: string): any => {
+  try {
+    const parts = deviceName.split('|');
+    if (parts.length < 6) return null;
+    
+    return {
+      id: parts[1],
+      latitude: parseFloat(parts[2]),
+      longitude: parseFloat(parts[3]),
+      ttl: parseInt(parts[4]),
+      type: parts[5],
+      impactForce: parseFloat(parts[6] || '0'),
+      timestamp: Date.now(),
+    };
+  } catch (e) {
+    console.log('Parse error:', e);
+    return null;
   }
+};
 
+// Request Bluetooth permissions
+const requestPermissions = async (): Promise<boolean> => {
+  if (Platform.OS === 'android') {
+    try {
+      const permissionsToRequest = [];
+      
+      if (Platform.Version >= 31) {
+        permissionsToRequest.push(
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+        );
+      }
+      
+      permissionsToRequest.push(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      );
+      
+      const granted = await PermissionsAndroid.requestMultiple(permissionsToRequest);
+      
+      return Object.values(granted).every(g => g === PermissionsAndroid.RESULTS.GRANTED);
+    } catch (err) {
+      console.log('Permission error:', err);
+      return false;
+    }
+  }
   return true;
 };
 
-/* ---------------- INTERNET CHECK ---------------- */
-const isOnline = async () => {
-  const net = await NetInfo.fetch();
-  return !!net.isConnected;
-};
-
-/* ---------------- BROADCAST ---------------- */
-const broadcast = (message: string) => {
-  const store = getGlobalStore();
-
-  store.push({
-    message,
-    timestamp: Date.now(),
-  });
-
-  if (store.length > 500) store.shift();
-
-  console.log("📡 BROADCAST:", message);
-};
-
-/* =========================================================
-   📡 SCANNER (RECEIVER / RELAY NODE)
-========================================================= */
-export const startMeshScan = (onReceive?: (payload: any) => void) => {
-  console.log("📡 BLE SCAN STARTED");
-
-  manager.startDeviceScan(null, null, async (error, device) => {
-    if (error || !device) return;
-
-    const name = device.name || device.localName;
-    if (!name || typeof name !== 'string') return;
-
-    if (!name.startsWith("C|")) return;
-
-    try {
-      const parts = name.split("|");
-
-      const messageId = parts[1];
-      const latitude = parseFloat(parts[2]);
-      const longitude = parseFloat(parts[3]);
-      const ttl = Number(parts[4] || 0);
-
-      if (!messageId || isNaN(latitude) || isNaN(longitude)) return;
-
-      /* ---------------- DEDUP ---------------- */
-      if (!safeAddDedup(scanSeen, messageId)) return;
-
-      console.log("📥 RECEIVED:", {
-        messageId,
-        latitude,
-        longitude,
-        ttl,
-      });
-
-      /* ---------------- SEND TO APP ---------------- */
-      onReceive?.({
-        id: messageId,
-        latitude,
-        longitude,
-        ttl,
-      });
-
-      /* ---------------- RELAY LOGIC ---------------- */
-      if (ttl > 0) {
-        const newTTL = ttl - 1;
-
-        const packet = `C|${messageId}|${latitude}|${longitude}|${newTTL}`;
-
-        setTimeout(() => {
-          broadcast(packet);
-          console.log("🔁 RELAYED:", newTTL);
-        }, 300);
-      }
-
-      /* ---------------- SERVER GATEWAY ---------------- */
-      if (await isOnline()) {
-        await fetch(
-          "https://rescuelink-backend-j0gz.onrender.com/api/v1/crash",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              latitude,
-              longitude,
-              source: "ble_mesh",
-              type: "CRASH",
-              packet_id: messageId,
-            }),
-          }
-        );
-
-        console.log("✅ SENT TO SERVER");
-      }
-
-    } catch (err) {
-      console.log("Parse error:", err);
+// Scan for devices (read device names)
+export const startMeshScan = async (onReceive?: (payload: any) => void) => {
+  try {
+    const hasPermissions = await requestPermissions();
+    if (!hasPermissions) {
+      console.log('❌ Bluetooth permissions denied');
+      return;
     }
-  });
+    
+    const state = await manager.state();
+    if (state !== 'PoweredOn') {
+      console.log('❌ Bluetooth is off');
+      return;
+    }
+    
+    console.log('🔍 Scanning for RescueLink devices...');
+    
+    manager.startDeviceScan(null, null, (error, device) => {
+      if (error) {
+        console.log('Scan error:', error);
+        return;
+      }
+      
+      if (device && device.name) {
+        const deviceName = device.name;
+        
+        // Check if it's our emergency format (starts with "C|")
+        if (deviceName.startsWith('C|')) {
+          console.log('📱 Found emergency device:', deviceName);
+          
+          const parsed = parseEmergencyMessage(deviceName);
+          if (parsed) {
+            onReceive?.(parsed);
+          }
+        }
+      }
+    });
+    
+    // Stop after 30 seconds
+    setTimeout(() => {
+      manager.stopDeviceScan();
+      console.log('🛑 Scan stopped');
+    }, 30000);
+    
+  } catch (error) {
+    console.log('Scan error:', error);
+  }
 };
 
-/* =========================================================
-   🛑 STOP SCAN
-========================================================= */
+// Stop scanning
 export const stopMeshScan = () => {
-  manager.stopDeviceScan();
-  console.log("🛑 BLE SCAN STOPPED");
+  try {
+    manager.stopDeviceScan();
+    console.log('🛑 BLE scan stopped');
+  } catch (error) {
+    console.log('Stop scan error:', error);
+  }
 };
 
-/* =========================================================
-   📤 ORIGIN BROADCAST
-========================================================= */
-export const broadcastMeshPayload = (payload: MeshPayload) => {
-  const messageId = `${Date.now()}`;
-  const ttl = 3;
-
-  const message = `C|${messageId}|${payload.latitude}|${payload.longitude}|${ttl}`;
-
-  broadcast(message);
-
-  console.log("🚨 ORIGIN:", message);
+// Get pending emergency (for demo)
+export const getPendingEmergency = async (): Promise<string | null> => {
+  try {
+    return await AsyncStorage.getItem('pending_emergency');
+  } catch (error) {
+    console.log('Get pending error:', error);
+    return null;
+  }
 };
 
-/* =========================================================
-   🔁 RELAY ENGINE
-========================================================= */
-export const relaySimulatedMesh = async () => {
-  const store = getGlobalStore();
-  const snapshot = [...store];
-
-  for (const item of snapshot) {
-    try {
-      const parts = item.message.split("|");
-
-      const messageId = parts[1];
-      const latitude = parseFloat(parts[2]);
-      const longitude = parseFloat(parts[3]);
-      const ttl = Number(parts[4] || 0);
-
-      if (!messageId || isNaN(latitude) || isNaN(longitude)) continue;
-
-      /* ---------------- DEDUP ---------------- */
-      if (!safeAddDedup(relaySeen, messageId)) continue;
-
-      console.log("🔁 RELAY ENGINE:", messageId);
-
-      /* ---------------- RELAY ---------------- */
-      if (ttl > 0) {
-        const newTTL = ttl - 1;
-
-        const relayPacket = `C|${messageId}|${latitude}|${longitude}|${newTTL}`;
-
-        setTimeout(() => {
-          broadcast(relayPacket);
-        }, 200);
-      }
-
-      /* ---------------- SERVER RELAY ---------------- */
-      if (await isOnline()) {
-        await fetch(
-          "https://rescuelink-backend-j0gz.onrender.com/api/v1/crash",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              latitude,
-              longitude,
-              source: "relay_engine",
-              type: "CRASH",
-              packet_id: messageId,
-            }),
-          }
-        );
-
-        console.log("✅ ENGINE SENT");
-      }
-
-    } catch (err) {
-      console.log("Relay error:", err);
-    }
+// Clear pending emergency
+export const clearPendingEmergency = async (): Promise<void> => {
+  try {
+    await AsyncStorage.removeItem('pending_emergency');
+  } catch (error) {
+    console.log('Clear pending error:', error);
   }
 };

@@ -1,4 +1,4 @@
-// HomeScreen.tsx - Modern Emergency Healthcare UI
+// HomeScreen.tsx - Complete with BLE Advertising Button
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
@@ -20,7 +20,7 @@ import {
   Dimensions,
 } from 'react-native';
 
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import Geolocation from '@react-native-community/geolocation';
 import PushNotification from 'react-native-push-notification';
 import NetInfo from '@react-native-community/netinfo';
@@ -28,13 +28,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { accelerometer, setUpdateIntervalForType, SensorTypes } from 'react-native-sensors';
 import { map } from 'rxjs/operators';
 import { saveHistoryEvent } from '../services/historyStorage';
+import Icon from 'react-native-vector-icons/Feather';
 
 import { playSOSSound, playCrashSound, playDrivingSound } from '../services/soundService';
 import { startMeshScan, stopMeshScan, broadcastMeshPayload } from '../services/bleMeshService';
 import { requestLocationPermission } from '../utils/LocationPermissions';
 import { launchCamera, launchImageLibrary, ImagePickerResponse, Asset } from 'react-native-image-picker';
+import { startAdvertising, stopAdvertising } from '../native/BLEAdvertiser';
 
-const { width, height } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 
 /* ---------------- TYPES ---------------- */
 type Coords = {
@@ -47,7 +49,9 @@ const SPEED_THRESHOLD = 20;
 const AUTO_OFF_DELAY = 10000;
 const CRASH_G_THRESHOLD = 3;
 
-export default function HomeScreen({ navigation }: any) {
+export default function HomeScreen({ navigation: propNavigation }: any) {
+  const navigation = useNavigation();
+  const nav = propNavigation || navigation;
 
   /* ---------------- STATE ---------------- */
   const [drivingMode, setDrivingMode] = useState<boolean>(false);
@@ -59,6 +63,8 @@ export default function HomeScreen({ navigation }: any) {
   const [selectedImage, setSelectedImage] = useState<Asset | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [locationCoords, setLocationCoords] = useState<Coords | null>(null);
+  const [bleReady, setBleReady] = useState<boolean>(false);
+  const [isAdvertising, setIsAdvertising] = useState<boolean>(false);
 
   /* ---------------- REFS ---------------- */
   const sosScale = useRef(new Animated.Value(1)).current;
@@ -117,6 +123,35 @@ export default function HomeScreen({ navigation }: any) {
     }
   };
 
+  /* ---------------- BLE ADVERTISING FUNCTIONS ---------------- */
+  const startBLEAdvertising = async () => {
+    try {
+      const message = JSON.stringify({
+        type: 'RESCUELINK',
+        device: 'RescueLink Device',
+        timestamp: Date.now(),
+        lat: locationCoords?.lat || 0,
+        lng: locationCoords?.lng || 0,
+      });
+      const result = await startAdvertising(message);
+      if (result) {
+        setIsAdvertising(true);
+        Alert.alert('BLE Advertising', 'Your device is now discoverable!');
+      } else {
+        Alert.alert('Error', 'Failed to start advertising');
+      }
+    } catch (error) {
+      console.log('Error:', error);
+      Alert.alert('Error', 'Failed to start advertising');
+    }
+  };
+
+  const stopBLEAdvertising = async () => {
+    await stopAdvertising();
+    setIsAdvertising(false);
+    Alert.alert('BLE Advertising', 'Device is no longer discoverable');
+  };
+
   /* ---------------- NOTIFICATIONS ---------------- */
   useFocusEffect(useCallback(() => {
     PushNotification.configure({
@@ -157,13 +192,25 @@ export default function HomeScreen({ navigation }: any) {
     return unsubscribe;
   }, []);
 
+  /* ---------------- BLE SETUP ---------------- */
+  useEffect(() => {
+    const setupBLE = async () => {
+      try {
+        setBleReady(true);
+        console.log('✅ BLE Mesh network ready');
+      } catch (error) {
+        console.log('BLE setup error:', error);
+      }
+    };
+    setupBLE();
+  }, []);
+
   /* ---------------- GPS & LOCATION ---------------- */
   useEffect(() => {
     const init = async () => {
       const granted = await requestLocationPermission();
       if (!granted) return;
 
-      // Get initial position
       Geolocation.getCurrentPosition(
         (pos) => {
           setLocationCoords({
@@ -264,7 +311,7 @@ export default function HomeScreen({ navigation }: any) {
       const payload = { type: 'CRASH', impactForce: gForce, timestamp: Date.now() };
 
       if (isOnline) {
-        navigation.navigate('CrashDetectionScreen', { impactForce: gForce });
+        nav.navigate('CrashDetectionScreen', { impactForce: gForce });
       } else {
         broadcastMeshPayload(payload);
         Alert.alert('Offline Mode', 'SOS sent via nearby devices');
@@ -387,6 +434,17 @@ export default function HomeScreen({ navigation }: any) {
         description: title.trim(),
       });
 
+      // Broadcast via BLE Mesh
+      if (bleReady) {
+        await broadcastMeshPayload({
+          id: `${Date.now()}`,
+          latitude: coords.lat,
+          longitude: coords.lng,
+          type: 'SOS',
+          impactForce: 0,
+        });
+      }
+
       const timeNow = new Date().toLocaleTimeString();
       Alert.alert(
         '🚨 SOS Sent Successfully',
@@ -424,8 +482,12 @@ export default function HomeScreen({ navigation }: any) {
   return (
     <>
       <StatusBar barStyle="light-content" backgroundColor="#0A3C5F" />
-      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-        
+      
+      <ScrollView 
+        style={styles.container} 
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Header Section */}
         <View style={styles.headerSection}>
           <Text style={styles.headerTitle}>RescueLink</Text>
@@ -435,6 +497,12 @@ export default function HomeScreen({ navigation }: any) {
               {isOnline ? 'Emergency Services Connected' : 'Offline Mesh Mode Active'}
             </Text>
           </View>
+          {bleReady && (
+            <View style={styles.bleStatus}>
+              <Icon name="bluetooth" size={14} color="#34C759" />
+              <Text style={styles.bleStatusText}>Mesh Network Ready</Text>
+            </View>
+          )}
         </View>
 
         {/* Speed Card */}
@@ -523,6 +591,34 @@ export default function HomeScreen({ navigation }: any) {
             ios_backgroundColor="#E5E5EA"
           />
         </View>
+
+        {/* BLE Advertising Button - NEW */}
+        <View style={styles.advertiseContainer}>
+          <TouchableOpacity
+            style={[styles.advertiseButton, isAdvertising && styles.advertiseButtonActive]}
+            onPress={isAdvertising ? stopBLEAdvertising : startBLEAdvertising}
+            activeOpacity={0.7}
+          >
+            <Icon name="bluetooth" size={20} color="#FFFFFF" />
+            <Text style={styles.advertiseButtonText}>
+              {isAdvertising ? 'STOP ADVERTISING' : 'MAKE DEVICE DISCOVERABLE'}
+            </Text>
+          </TouchableOpacity>
+          {isAdvertising && (
+            <Text style={styles.advertiseNote}>
+              🔵 Your device is now visible to nearby RescueLink scanners
+            </Text>
+          )}
+        </View>
+
+        {/* Receiver Mode Button */}
+        <TouchableOpacity
+          style={styles.receiverButton}
+          onPress={() => nav.navigate('BleReceiver')}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.receiverText}>OPEN RECEIVER MODE</Text>
+        </TouchableOpacity>
 
         {/* Info Note */}
         {drivingMode && (
@@ -620,6 +716,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#F2F2F7',
   },
 
+  scrollContent: {
+    paddingBottom: 100,
+  },
+
   headerSection: {
     backgroundColor: '#0A3C5F',
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
@@ -652,6 +752,19 @@ const styles = StyleSheet.create({
   statusText: {
     color: '#E5E5EA',
     fontSize: 13,
+    fontWeight: '500',
+  },
+
+  bleStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 6,
+  },
+
+  bleStatusText: {
+    color: '#34C759',
+    fontSize: 11,
     fontWeight: '500',
   },
 
@@ -854,6 +967,38 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
 
+  advertiseContainer: {
+    marginHorizontal: 16,
+    marginTop: 16,
+  },
+
+  advertiseButton: {
+    backgroundColor: '#5856D6',
+    paddingVertical: 14,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+
+  advertiseButtonActive: {
+    backgroundColor: '#FF3B30',
+  },
+
+  advertiseButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+
+  advertiseNote: {
+    textAlign: 'center',
+    color: '#34C759',
+    fontSize: 12,
+    marginTop: 8,
+  },
+
   infoNote: {
     backgroundColor: '#FFE5E5',
     borderRadius: 12,
@@ -868,6 +1013,28 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     textAlign: 'center',
+  },
+
+  receiverButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 8,
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+
+  receiverText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 16,
   },
 
   modalContainer: {

@@ -32,6 +32,9 @@
     <!-- ⚡ IMPORTANT -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    
+    <!-- ✅ ADD THIS for BLE Manager foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <application
         android:name=".MainApplication"
@@ -76,6 +79,12 @@
             android:name=".CrashService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- ✅ ADD THIS for BLE Manager Service -->
+        <service
+            android:name="com.polidea.reactnativeble.BleService"
+            android:foregroundServiceType="location"
+            android:exported="false" />
 
     </application>
 

@@ -4,42 +4,28 @@ apply plugin: "com.facebook.react"
 apply from: "../../node_modules/react-native-vector-icons/fonts.gradle"
 
 react {
-    // React Native configuration options (uncomment and customize as needed)
-    // root = file("../../")
-    // reactNativeDir = file("../../node_modules/react-native")
-    // codegenDir = file("../../node_modules/@react-native/codegen")
-    // cliFile = file("../../node_modules/react-native/cli.js")
-    // debuggableVariants = ["liteDebug", "prodDebug"]
-    // nodeExecutableAndArgs = ["node"]
-    // bundleCommand = "ram-bundle"
-    // bundleConfig = file("../rn-cli.config.js")
-    // bundleAssetName = "MyApplication.android.bundle"
-    // entryFile = file("../js/MyApplication.android.js")
-    // extraPackagerArgs = []
-    // hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"
-    // hermesFlags = ["-O", "-output-source-map"]
     autolinkLibrariesWithApp()
 }
 
-// Toggle Proguard for release builds
 def enableProguardInReleaseBuilds = false
-
-// JavaScript engine (JSC) flavor
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 android {
-    compileSdkVersion rootProject.ext.compileSdkVersion
-    buildToolsVersion rootProject.ext.buildToolsVersion
-    ndkVersion rootProject.ext.ndkVersion
+    compileSdk 36
+    buildToolsVersion "36.0.0"
+    ndkVersion "27.1.12297006"
 
     namespace "com.rescuelinkapp"
 
     defaultConfig {
         applicationId "com.rescuelinkapp"
-        minSdkVersion rootProject.ext.minSdkVersion
-        targetSdkVersion rootProject.ext.targetSdkVersion
+        minSdk 24
+        targetSdk 36
         versionCode 1
         versionName "1.0"
+        
+        // ✅ ADD THIS for BLE Manager
+        multiDexEnabled true
     }
 
     signingConfigs {
@@ -56,7 +42,6 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            // Use a custom keystore in production
             signingConfig signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
@@ -65,13 +50,24 @@ android {
 }
 
 dependencies {
-    // React Native core
     implementation("com.facebook.react:react-android")
+    
+    // ✅ ADD THIS for BLE Manager
+    implementation project(':react-native-ble-manager')
+    
+    // ✅ ADD THIS for multi-dex support
+    implementation 'androidx.multidex:multidex:2.0.1'
 
-    // Hermes or JSC
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
     } else {
         implementation jscFlavor
+    }
+}
+
+// ✅ ADD THIS at the bottom
+configurations.all {
+    resolutionStrategy {
+        force 'com.facebook.react:react-native:0.76.0'
     }
 }

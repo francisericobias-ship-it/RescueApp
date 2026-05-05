@@ -1,5 +1,4 @@
-// CrashDetectionScreen.tsx - Modern Emergency Crash Detection UI
-// No render errors, fully typed, production ready
+// CrashDetectionScreen.tsx - FIXED VERSION
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -54,6 +53,7 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const triggerTimeRef = useRef<number | null>(null);
   const alreadySent = useRef(false);
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null); // ✅ Add ref for interval
   const seen = useRef<Set<string>>(new Set());
   const relayedOnce = useRef<Set<string>>(new Set());
   const vibrationInterval = useRef<any>(null);
@@ -194,11 +194,20 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
     return () => pulse.stop();
   }, [pulseAnim]);
 
+  /* ---------------- STOP COUNTDOWN ---------------- */
+  const stopCountdown = () => {
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+  };
+
   /* ---------------- COUNTDOWN TIMER ---------------- */
   useEffect(() => {
     triggerTimeRef.current = Date.now() + 10000;
 
-    const interval = setInterval(() => {
+    // ✅ Store interval reference para ma-cancel later
+    countdownIntervalRef.current = setInterval(() => {
       if (!triggerTimeRef.current) return;
 
       const remaining = Math.max(0, Math.ceil((triggerTimeRef.current - Date.now()) / 1000));
@@ -217,13 +226,20 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
         }),
       ]).start();
 
+      // ✅ Only trigger if not already sent
       if (!alreadySent.current && remaining <= 0) {
         alreadySent.current = true;
+        stopCountdown(); // ✅ Stop the interval
         handleCrashDetected();
       }
     }, 1000);
 
-    return () => clearInterval(interval);
+    return () => {
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+    };
   }, [animatedCountdown]);
 
   /* ---------------- LOCATION ---------------- */
@@ -235,13 +251,25 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
             latitude: pos.coords.latitude,
             longitude: pos.coords.longitude,
           }),
-        () => resolve(null),
+        (error) => {
+          console.log('Location error:', error);
+          resolve(null);
+        },
         { enableHighAccuracy: true, timeout: 10000 }
       );
     });
 
   /* ---------------- CRASH HANDLER ---------------- */
   const handleCrashDetected = async () => {
+    // ✅ Prevent double execution
+    if (alreadySent.current) {
+      console.log('⚠️ Already sent, ignoring duplicate call');
+      return;
+    }
+    
+    alreadySent.current = true;
+    stopCountdown(); // ✅ Stop the countdown timer
+    
     vibrationActive.current = false;
     Vibration.cancel();
     setIsSending(true);
@@ -251,8 +279,11 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
       const location = await getLocation();
       const net = await NetInfo.fetch();
 
+      // ✅ Use actual location, not default 0
       const lat = location?.latitude ?? 0;
       const lng = location?.longitude ?? 0;
+      
+      console.log('📍 Sending crash report with location:', { lat, lng });
 
       const payload = {
         id: `${Date.now()}`,
@@ -312,6 +343,10 @@ export default function CrashDetectionScreen({ navigation, route }: any) {
 
   /* ---------------- CANCEL HANDLER ---------------- */
   const handleCancel = async () => {
+    // ✅ Stop countdown when cancelled
+    stopCountdown();
+    alreadySent.current = true; // ✅ Prevent auto-report after cancel
+    
     vibrationActive.current = false;
     Vibration.cancel();
     setCancelled(true);

@@ -18,7 +18,7 @@ import HomeScreen from '../screens/HomeScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SettingsScreen from '../screens/SettingsScreen';
-import { startBroadcast } from '../services/bleBroadcastService';
+import BleBroadcastScreen from '../screens/BleBroadcastScreen';
 
 export type TabParamList = {
   Home: undefined;
@@ -187,7 +187,7 @@ export default function BottomTabNavigator() {
       {/* Emergency Mesh Network Button */}
       <Tab.Screen
         name="BleBroadcast"
-        component={View} // Will be replaced with actual BLE screen
+        component={BleBroadcastScreen} // Will be replaced with actual BLE screen
         options={{
           tabBarButton: () => <EmergencyMiddleButton />,
           tabBarAccessibilityLabel: "Emergency Mesh Network",

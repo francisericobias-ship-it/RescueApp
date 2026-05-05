@@ -1,3 +1,5 @@
+// MainApplication.kt
+
 package com.rescuelinkapp
 
 import android.app.Application

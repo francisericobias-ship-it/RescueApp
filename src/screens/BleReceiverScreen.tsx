@@ -1,4 +1,4 @@
-// BleReceiverScreen.tsx - COMPLETE FIXED VERSION with Device Name Parsing
+// BleReceiverScreen.tsx - COMPLETE with View Map & Forward to Admin
 
 import React, { useState, useRef, useEffect } from 'react';
 import {
@@ -14,12 +14,15 @@ import {
   Animated,
   RefreshControl,
   Vibration,
+  Linking,
+  TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { startScanning, stopScanning } from '../native/BLEAdvertiser';
 import socket from '../services/socket';
+import DeviceInfo from 'react-native-device-info';
 
 interface EmergencyData {
   id: string;
@@ -47,8 +50,58 @@ export default function BleReceiverScreen() {
   const [lastMessageTime, setLastMessageTime] = useState<Date | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [selectedEmergency, setSelectedEmergency] = useState<EmergencyData | null>(null);
   
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // ✅ VIEW ON MAP FUNCTION
+  const openMap = (latitude: number, longitude: number, title?: string) => {
+    const scheme = Platform.OS === 'ios' ? 'maps://' : 'geo:';
+    const url = Platform.OS === 'ios'
+      ? `${scheme}?q=${latitude},${longitude}&z=16`
+      : `${scheme}${latitude},${longitude}?q=${latitude},${longitude}`;
+    
+    Linking.openURL(url).catch(() => {
+      Linking.openURL(`https://maps.google.com/?q=${latitude},${longitude}`);
+    });
+  };
+
+  // ✅ FORWARD TO ADMIN
+  const forwardToAdmin = async (emergency: EmergencyData) => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const deviceId = await DeviceInfo.getUniqueId();
+      
+      console.log('📡 Forwarding emergency to admin:', emergency);
+      
+      const response = await fetch('https://rescuelink-backend-j0gz.onrender.com/api/v1/emergency/relay', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          ...emergency,
+          source: 'ble_receiver',
+          relay_device: deviceId,
+          relay_timestamp: Date.now(),
+        }),
+      });
+      
+      const result = await response.json();
+      
+      if (response.ok) {
+        console.log('✅ Emergency forwarded to admin successfully');
+        return true;
+      } else {
+        console.log('❌ Forward failed:', result);
+        return false;
+      }
+    } catch (error) {
+      console.log('Forward error:', error);
+      return false;
+    }
+  };
 
   // Socket.io connection
   useEffect(() => {
@@ -80,7 +133,11 @@ export default function BleReceiverScreen() {
       Alert.alert(
         '🚨 EMERGENCY ALERT',
         `Type: ${data.type}\n📍 Location: ${data.latitude.toFixed(4)}, ${data.longitude.toFixed(4)}`,
-        [{ text: 'OK', style: 'default' }]
+        [
+          { text: 'View Map', onPress: () => openMap(data.latitude, data.longitude) },
+          { text: 'Forward to Admin', onPress: () => forwardToAdmin(data) },
+          { text: 'OK', style: 'cancel' },
+        ]
       );
     });
 
@@ -107,7 +164,6 @@ export default function BleReceiverScreen() {
   // Parse emergency from device name (short message format)
   const parseEmergencyFromDeviceName = (deviceName: string): EmergencyData | null => {
     // Format: E|LAT|LNG|TYPE
-    // Example: E|14.599|120.984|S
     if (deviceName && deviceName.startsWith('E|')) {
       try {
         const parts = deviceName.split('|');
@@ -134,6 +190,43 @@ export default function BleReceiverScreen() {
     return null;
   };
 
+  // Show emergency alert with options
+  const showEmergencyAlert = async (emergency: EmergencyData, deviceName: string) => {
+    setEmergencies(prev => [emergency, ...prev]);
+    setMessagesReceived(prev => prev + 1);
+    setLastMessageTime(new Date());
+    setStatus(`🚨 ${emergency.type} from ${deviceName}!`);
+    Vibration.vibrate([0, 500, 200, 500]);
+    
+    Alert.alert(
+      `🚨 ${emergency.type} ALERT`,
+      `Emergency signal from ${deviceName}\n📍 Location: ${emergency.latitude.toFixed(4)}, ${emergency.longitude.toFixed(4)}`,
+      [
+        { 
+          text: 'View Map', 
+          onPress: () => openMap(emergency.latitude, emergency.longitude),
+          style: 'default'
+        },
+        { 
+          text: 'Forward to Admin', 
+          onPress: async () => {
+            const success = await forwardToAdmin(emergency);
+            if (success) {
+              Alert.alert('Forwarded', 'Emergency has been forwarded to admin');
+            } else {
+              Alert.alert('Error', 'Failed to forward emergency');
+            }
+          },
+          style: 'default'
+        },
+        { 
+          text: 'OK', 
+          style: 'cancel' 
+        },
+      ]
+    );
+  };
+
   const handleStartScan = async () => {
     try {
       setStatus('Scanning for devices...');
@@ -145,42 +238,23 @@ export default function BleReceiverScreen() {
       setDevices(foundDevices);
       setStatus(foundDevices.length > 0 ? `Found ${foundDevices.length} device(s)` : 'No devices found');
       
-      // Check if any device has emergency data (from service data)
+      // Check each device for emergency data
       for (const device of foundDevices) {
+        // Check service data
         if (device.data) {
           try {
             const emergency = JSON.parse(device.data);
-            setEmergencies(prev => [emergency, ...prev]);
-            setMessagesReceived(prev => prev + 1);
-            setLastMessageTime(new Date());
-            setStatus(`🚨 EMERGENCY from ${device.name}!`);
-            Vibration.vibrate([0, 500, 200, 500]);
-            
-            Alert.alert(
-              '🚨 EMERGENCY ALERT',
-              `Emergency signal from ${device.name}\n📍 Location: ${emergency.latitude?.toFixed(4)}, ${emergency.longitude?.toFixed(4)}`,
-              [{ text: 'OK', style: 'default' }]
-            );
+            await showEmergencyAlert(emergency, device.name);
           } catch (e) {
             console.log('Parse error:', e);
           }
         }
         
-        // ✅ Check device name for short emergency message format
+        // Check device name for short emergency message
         const emergencyFromName = parseEmergencyFromDeviceName(device.name);
         if (emergencyFromName) {
           console.log('🚨 Emergency detected from device name:', device.name);
-          setEmergencies(prev => [emergencyFromName, ...prev]);
-          setMessagesReceived(prev => prev + 1);
-          setLastMessageTime(new Date());
-          setStatus(`🚨 ${emergencyFromName.type} from ${device.name}!`);
-          Vibration.vibrate([0, 500, 200, 500]);
-          
-          Alert.alert(
-            `🚨 ${emergencyFromName.type} ALERT`,
-            `Emergency signal from ${device.name}\n📍 Location: ${emergencyFromName.latitude.toFixed(4)}, ${emergencyFromName.longitude.toFixed(4)}`,
-            [{ text: 'OK', style: 'default' }]
-          );
+          await showEmergencyAlert(emergencyFromName, device.name);
         }
       }
       
@@ -219,7 +293,6 @@ export default function BleReceiverScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#F2F2F7" />
       <View style={styles.container}>
-        {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerIcon}>
             <Icon name="shield" size={32} color="#FF3B30" />
@@ -297,12 +370,11 @@ export default function BleReceiverScreen() {
             </Pressable>
           </View>
 
-          {/* Devices List Header */}
+          {/* Devices List */}
           <View style={styles.devicesHeader}>
             <Text style={styles.sectionTitle}>Nearby Devices ({devices.length})</Text>
           </View>
           
-          {/* Devices List */}
           <ScrollView style={styles.deviceList} showsVerticalScrollIndicator={false}>
             {devices.length === 0 && !isScanning && (
               <View style={styles.noDevices}>
@@ -340,7 +412,6 @@ export default function BleReceiverScreen() {
                     <Text style={styles.emergencyBadgeText}>SOS</Text>
                   </View>
                 )}
-                {/* Show indicator if device name contains emergency format */}
                 {device.name && device.name.startsWith('E|') && (
                   <View style={styles.emergencyIndicator}>
                     <Text style={styles.emergencyIndicatorText}>🚨</Text>
@@ -350,12 +421,11 @@ export default function BleReceiverScreen() {
             ))}
           </ScrollView>
 
-          {/* Emergency Alerts Header */}
+          {/* Emergency Alerts */}
           <Text style={[styles.sectionTitle, styles.emergencyHeaderSpacing]}>
             Emergency Alerts ({emergencies.length})
           </Text>
           
-          {/* Emergency Alerts List */}
           <ScrollView style={styles.emergencyList} showsVerticalScrollIndicator={false}>
             {emergencies.length === 0 && (
               <View style={styles.noEmergencies}>
@@ -381,6 +451,34 @@ export default function BleReceiverScreen() {
                 <Text style={styles.emergencyTime}>
                   🕐 {new Date(emergency.timestamp).toLocaleTimeString()}
                 </Text>
+                
+                {/* ✅ VIEW ON MAP & FORWARD BUTTONS */}
+                <View style={styles.emergencyButtons}>
+                  <TouchableOpacity
+                    style={[styles.emergencyButton, styles.mapButton]}
+                    onPress={() => openMap(emergency.latitude, emergency.longitude)}
+                    activeOpacity={0.8}
+                  >
+                    <Icon name="map-pin" size={16} color="#FFFFFF" />
+                    <Text style={styles.emergencyButtonText}>View Map</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={[styles.emergencyButton, styles.forwardButton]}
+                    onPress={async () => {
+                      const success = await forwardToAdmin(emergency);
+                      if (success) {
+                        Alert.alert('Forwarded', 'Emergency forwarded to admin');
+                      } else {
+                        Alert.alert('Error', 'Failed to forward');
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Icon name="send" size={16} color="#FFFFFF" />
+                    <Text style={styles.emergencyButtonText}>Forward to Admin</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ))}
           </ScrollView>
@@ -690,6 +788,31 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#8E8E93',
     marginTop: 8,
+  },
+  emergencyButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 12,
+  },
+  emergencyButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+    gap: 6,
+  },
+  mapButton: {
+    backgroundColor: '#007AFF',
+  },
+  forwardButton: {
+    backgroundColor: '#FF3B30',
+  },
+  emergencyButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 13,
   },
   noEmergencies: {
     alignItems: 'center',

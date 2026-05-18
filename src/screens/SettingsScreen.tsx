@@ -21,7 +21,6 @@ const STORAGE_KEYS = {
   notifications: '@settings_notifications',
   locationAlways: '@settings_location_always',
   crashSensitivity: '@settings_crash_sensitivity',
-  sosAutoDial: '@settings_sos_auto_dial',
   emergencySounds: '@settings_emergency_sounds',
 } as const;
 
@@ -31,7 +30,6 @@ export default function SettingsScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(true);
   const [locationAlways, setLocationAlways] = useState<boolean>(false);
   const [crashSensitivity, setCrashSensitivity] = useState<CrashSensitivity>('medium');
-  const [sosAutoDial, setSosAutoDial] = useState<boolean>(false);
   const [emergencySounds, setEmergencySounds] = useState<boolean>(true);
 
   useEffect(() => {
@@ -41,15 +39,13 @@ export default function SettingsScreen() {
           STORAGE_KEYS.notifications,
           STORAGE_KEYS.locationAlways,
           STORAGE_KEYS.crashSensitivity,
-          STORAGE_KEYS.sosAutoDial,
           STORAGE_KEYS.emergencySounds,
         ]);
 
         setNotificationsEnabled(results[0][1] !== 'false');
         setLocationAlways(results[1][1] === 'true');
         setCrashSensitivity((results[2][1] as CrashSensitivity) || 'medium');
-        setSosAutoDial(results[3][1] === 'true');
-        setEmergencySounds(results[4][1] !== 'false');
+        setEmergencySounds(results[3][1] !== 'false');
       } catch (e) {
         console.warn('Failed to load settings', e);
       }
@@ -88,7 +84,6 @@ export default function SettingsScreen() {
       setNotificationsEnabled(true);
       setLocationAlways(false);
       setCrashSensitivity('medium');
-      setSosAutoDial(false);
       setEmergencySounds(true);
       Alert.alert('Success', 'Settings have been reset to default');
     } catch (e) {
@@ -128,36 +123,6 @@ export default function SettingsScreen() {
             </View>
             <Text style={styles.sectionTitle}>Emergency Settings</Text>
           </View>
-
-          <SettingItem
-            icon="phone"
-            iconColor="#FF3B30"
-            title="Auto-dial Emergency Services"
-            description="Automatically call emergency services when SOS is triggered"
-            value={sosAutoDial}
-            onValueChange={(val) => {
-              if (val) {
-                Alert.alert(
-                  'Auto-dial Emergency',
-                  'This will automatically call emergency services when you trigger SOS. This feature requires phone permissions.',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'Enable',
-                      onPress: () => {
-                        setSosAutoDial(val);
-                        saveSetting(STORAGE_KEYS.sosAutoDial, val);
-                      },
-                    },
-                  ]
-                );
-              } else {
-                setSosAutoDial(val);
-                saveSetting(STORAGE_KEYS.sosAutoDial, val);
-              }
-            }}
-            type="switch"
-          />
 
           <SettingItem
             icon="volume-2"

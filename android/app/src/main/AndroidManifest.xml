@@ -21,6 +21,7 @@
     <!-- 📷 MEDIA -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
     <!-- 🔵 BLUETOOTH -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
@@ -29,12 +30,14 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
-    <!-- ⚡ IMPORTANT -->
+    <!-- ⚡ IMPORTANT - FOREGROUND SERVICES -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    
-    <!-- ✅ ADD THIS for BLE Manager foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- ✅ VIBRATION -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:name=".MainApplication"
@@ -44,7 +47,8 @@
         android:allowBackup="false"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="${usesCleartextTraffic}"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:requestLegacyExternalStorage="true">
 
         <!-- 🔵 MAIN ACTIVITY -->
         <activity
@@ -64,7 +68,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 🚨 CRASH OVERLAY ACTIVITY (KEY) -->
+        <!-- 🚨 CRASH OVERLAY ACTIVITY -->
         <activity
             android:name=".CrashActivity"
             android:exported="false"
@@ -74,17 +78,33 @@
             android:launchMode="singleTask"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
 
-        <!-- 🔥 CRASH SERVICE (TRIGGER EVERY TIME) -->
+        <!-- ✅ REQUIRED FOR react-native-background-actions -->
+        <service 
+            android:name="com.asterinet.react.bgactions.RNBackgroundActionsTask"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
+        <!-- 🔥 CRASH SERVICE -->
         <service
             android:name=".CrashService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
-        <!-- ✅ ADD THIS for BLE Manager Service -->
+        <!-- ✅ BLE MANAGER SERVICE -->
         <service
             android:name="com.polidea.reactnativeble.BleService"
             android:foregroundServiceType="location"
             android:exported="false" />
+
+        <!-- ✅ RECEIVER FOR BOOT COMPLETED (para mag-restart ang service after reboot) -->
+        <receiver 
+            android:name="com.asterinet.react.bgactions.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

@@ -1,4 +1,4 @@
-// App.tsx - Complete with all permissions for Android 11 and 14
+// App.tsx - Complete with background crash detection
 
 import React, { useEffect, useState, useRef } from 'react';
 import {
@@ -19,6 +19,10 @@ import socket from './src/services/socketService';
 import { saveHistoryEvent } from './src/services/historyStorage';
 
 import { BleManager } from 'react-native-ble-plx';
+import { startCrashService, stopCrashService } from './src/services/backgroundCrashService';
+import { broadcastMeshPayload } from './src/services/bleMeshService';
+import DeviceInfo from 'react-native-device-info';
+import Geolocation from '@react-native-community/geolocation';
 
 type InitialRouteType = 'Onboarding' | 'Login' | 'MainTabs';
 
@@ -34,85 +38,12 @@ export default function App() {
 
   (global as any).navigationRef = navigationRef;
 
-  /* ---------------- REQUEST ALL PERMISSIONS (Android 11 & 14 compatible) ---------------- */
-  const requestPermissions = async () => {
-    if (Platform.OS !== 'android') return true;
-
-    try {
-      const permissionsToRequest = [];
-
-      // ========== LOCATION PERMISSIONS (Required for all Android versions) ==========
-      permissionsToRequest.push(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION
-      );
-
-      // ========== CAMERA PERMISSION ==========
-      permissionsToRequest.push(
-        PermissionsAndroid.PERMISSIONS.CAMERA
-      );
-
-      // ========== NOTIFICATION PERMISSION (Android 13+) ==========
-      if (Platform.Version >= 33) {
-        permissionsToRequest.push(
-          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
-        );
-      }
-
-      // ========== BLUETOOTH PERMISSIONS ==========
-      if (Platform.Version >= 31) {
-        // Android 12+ (API 31+) needs separate Bluetooth permissions
-        permissionsToRequest.push(
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE
-        );
-      } else {
-        // Android 11 and below - traditional Bluetooth permissions
-        permissionsToRequest.push(
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADMIN
-        );
-      }
-
-      // Request all permissions at once
-      const granted = await PermissionsAndroid.requestMultiple(permissionsToRequest);
-
-      // Log results
-      let allGranted = true;
-      Object.entries(granted).forEach(([permission, result]) => {
-        const isGranted = result === PermissionsAndroid.RESULTS.GRANTED;
-        console.log(`${permission}: ${isGranted ? '✅' : '❌'}`);
-        if (!isGranted) allGranted = false;
-      });
-
-      // Show alert for important missing permissions
-      if (!allGranted) {
-        Alert.alert(
-          'Permissions Needed',
-          'Some features may not work properly without permissions. You can enable them in Settings.',
-          [
-            { text: 'Later', style: 'cancel' },
-            { text: 'Open Settings', onPress: () => Linking.openSettings() }
-          ]
-        );
-      }
-
-      console.log('✅ All permissions requested');
-      return allGranted;
-      
-    } catch (err) {
-      console.log('Permission error:', err);
-      return false;
-    }
-  };
-
-  /* ---------------- REQUEST PERMISSIONS SEQUENTIALLY (Better UX) ---------------- */
+  /* ---------------- REQUEST PERMISSIONS SEQUENTIALLY ---------------- */
   const requestPermissionsSequentially = async () => {
     if (Platform.OS !== 'android') return true;
 
     try {
-      // 1. Location permission (Most important)
+      // 1. Location permission
       const locationGranted = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         {
@@ -125,7 +56,6 @@ export default function App() {
 
       // 2. Bluetooth permissions based on Android version
       if (Platform.Version >= 31) {
-        // Android 12+
         await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
           {
@@ -153,7 +83,6 @@ export default function App() {
           }
         );
       } else {
-        // Android 11 and below
         await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.BLUETOOTH,
           {
@@ -186,12 +115,84 @@ export default function App() {
         );
       }
 
-      console.log('✅ All permissions requested sequentially');
+      console.log('✅ All permissions requested');
       return locationGranted === PermissionsAndroid.RESULTS.GRANTED;
       
     } catch (err) {
       console.log('Permission error:', err);
       return false;
+    }
+  };
+
+  /* ---------------- BACKGROUND CRASH HANDLER ---------------- */
+  const sendCrashToBackend = async (): Promise<void> => {
+    console.log('🚨 Background crash: Sending to backend...');
+    
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const deviceId = await DeviceInfo.getUniqueId();
+      const packetId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Get current location
+      let lat = 0, lng = 0;
+      Geolocation.getCurrentPosition(
+        (pos) => {
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+        },
+        (error) => console.log('Location error:', error),
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 5000 }
+      );
+      
+      const crashData = {
+        event_type: 'auto_crash',
+        latitude: lat,
+        longitude: lng,
+        impact_force: 3.5,
+        severity: 'moderate',
+        device_id: deviceId,
+        source: 'background_service',
+        packet_id: packetId,
+        timestamp: new Date().toISOString(),
+        status: 'pending',
+        movement_detected: true,
+      };
+      
+      const response = await fetch('https://rescuelink-backend-j0gz.onrender.com/api/v1/crash', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify(crashData),
+      });
+      
+      if (response.ok) {
+        console.log('✅ Background crash sent to admin');
+      } else {
+        console.log('❌ Background crash failed:', await response.text());
+      }
+      
+      // Also broadcast via BLE
+      await broadcastMeshPayload({
+        latitude: lat,
+        longitude: lng,
+        type: 'CRASH',
+        impactForce: 3.5,
+        ttl: 3,
+      });
+      
+    } catch (error) {
+      console.log('Failed to send background crash:', error);
+    }
+  };
+
+  const setupBackgroundCrashService = async () => {
+    try {
+      await startCrashService(3.5, 10000);
+      console.log('✅ Background crash service started');
+    } catch (error) {
+      console.log('Failed to setup background crash service:', error);
     }
   };
 
@@ -204,24 +205,14 @@ export default function App() {
       if (state !== 'PoweredOn') {
         Alert.alert(
           '🔵 Enable Bluetooth',
-          'RescueLink needs Bluetooth for:\n\n• Emergency mesh network\n• Crash detection\n• Nearby device discovery\n\nPlease enable Bluetooth to use all features.',
+          'RescueLink needs Bluetooth for emergency mesh network.',
           [
-            { 
-              text: 'Not Now', 
-              style: 'cancel',
-              onPress: () => console.log('User skipped Bluetooth')
-            },
-            { 
-              text: 'Open Settings', 
-              onPress: () => {
-                Linking.sendIntent('android.settings.BLUETOOTH_SETTINGS');
-              }
-            }
+            { text: 'Not Now', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.sendIntent('android.settings.BLUETOOTH_SETTINGS') }
           ]
         );
         return false;
       }
-      
       return true;
     } catch (error) {
       console.log('Bluetooth check error:', error);
@@ -232,18 +223,15 @@ export default function App() {
   /* ---------------- BLE SCAN ---------------- */
   const startDeviceScan = () => {
     console.log('📡 BLE SCAN STARTED');
-
     bleManager.startDeviceScan(null, null, (error, device) => {
       if (error) {
         console.log('Scan error:', error);
         return;
       }
-
       if (device?.name?.startsWith('C|')) {
         console.log('🛰️ Found device:', device.name);
       }
     });
-
     setTimeout(() => {
       bleManager.stopDeviceScan();
       console.log('🛑 BLE SCAN STOPPED');
@@ -255,10 +243,8 @@ export default function App() {
     let mounted = true;
 
     const init = async () => {
-      // Request all permissions
       await requestPermissionsSequentially();
       
-      // Check Bluetooth status and prompt
       const bluetoothReady = await checkBluetoothAndPrompt();
       
       if (!mounted) return;
@@ -266,6 +252,9 @@ export default function App() {
       if (bluetoothReady) {
         startDeviceScan();
       }
+      
+      // Start background crash service
+      await setupBackgroundCrashService();
       
       checkAppState();
     };
@@ -276,6 +265,7 @@ export default function App() {
       mounted = false;
       bleManager.stopDeviceScan();
       bleManager.destroy();
+      stopCrashService();
     };
   }, []);
 
@@ -305,7 +295,6 @@ export default function App() {
 
       if (crashFlag === 'true' && !crashHandledRef.current) {
         crashHandledRef.current = true;
-
         await AsyncStorage.removeItem('OPEN_CRASH');
 
         const go = () => {
@@ -313,22 +302,14 @@ export default function App() {
             setTimeout(go, 300);
             return;
           }
-
           navigationRef.reset({
             index: 0,
-            routes: [
-              {
-                name: 'CrashDetectionScreen',
-                params: { impactForce: 3.5 },
-              },
-            ],
+            routes: [{ name: 'CrashDetectionScreen', params: { impactForce: 3.5 } }],
           });
         };
-
         setTimeout(go, 500);
       }
     };
-
     checkCrashTrigger();
   }, []);
 
@@ -336,7 +317,6 @@ export default function App() {
   useEffect(() => {
     socket.on('connect', () => console.log('✅ SOCKET CONNECTED'));
     socket.on('disconnect', () => console.log('❌ SOCKET DISCONNECTED'));
-
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -349,7 +329,6 @@ export default function App() {
 
     const handler = async (data: any) => {
       if (!data?.id) return;
-
       if (lastHandledId.current === data.id) return;
       lastHandledId.current = data.id;
 
@@ -364,31 +343,21 @@ export default function App() {
     };
 
     socket.on('alert:assigned', handler);
-
-    return () => {
-      socket.off('alert:assigned', handler);
-    };
+    return () => socket.off('alert:assigned', handler);
   }, [currentUserId]);
 
-  /* ---------------- 🚨 CRASH AUTO RETURN TO HOME ---------------- */
+  /* ---------------- CRASH AUTO RETURN TO HOME ---------------- */
   useEffect(() => {
     const interval = setInterval(async () => {
       const flag = await AsyncStorage.getItem('CRASH_DONE');
-
       if (flag === 'true') {
         await AsyncStorage.removeItem('CRASH_DONE');
-
         if (navigationRef.isReady()) {
-          navigationRef.reset({
-            index: 0,
-            routes: [{ name: 'MainTabs' }],
-          });
-
+          navigationRef.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
           console.log('🏠 Returned to Home (MainTabs)');
         }
       }
     }, 1000);
-
     return () => clearInterval(interval);
   }, []);
 

@@ -1,4 +1,4 @@
-// HomeScreen.tsx - Complete with BLE Advertising Button
+// HomeScreen.tsx - Simplified with Real GPS Speed Only
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
@@ -434,7 +434,6 @@ export default function HomeScreen({ navigation: propNavigation }: any) {
         description: title.trim(),
       });
 
-      // Broadcast via BLE Mesh
       if (bleReady) {
         await broadcastMeshPayload({
           id: `${Date.now()}`,
@@ -592,7 +591,7 @@ export default function HomeScreen({ navigation: propNavigation }: any) {
           />
         </View>
 
-        {/* BLE Advertising Button - NEW */}
+        {/* BLE Advertising Button */}
         <View style={styles.advertiseContainer}>
           <TouchableOpacity
             style={[styles.advertiseButton, isAdvertising && styles.advertiseButtonActive]}
@@ -709,17 +708,14 @@ export default function HomeScreen({ navigation: propNavigation }: any) {
   );
 }
 
-/* ---------------- STYLES ---------------- */
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F2F2F7',
   },
-
   scrollContent: {
     paddingBottom: 100,
   },
-
   headerSection: {
     backgroundColor: '#0A3C5F',
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
@@ -728,7 +724,6 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
   },
-
   headerTitle: {
     fontSize: 34,
     fontWeight: '800',
@@ -736,38 +731,32 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
     marginBottom: 12,
   },
-
   statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-
   statusDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     marginRight: 8,
   },
-
   statusText: {
     color: '#E5E5EA',
     fontSize: 13,
     fontWeight: '500',
   },
-
   bleStatus: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 8,
-    gap: 6,
   },
-
   bleStatusText: {
     color: '#34C759',
     fontSize: 11,
     fontWeight: '500',
+    marginLeft: 6,
   },
-
   speedCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -780,14 +769,12 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 3,
   },
-
   speedHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
   },
-
   cardLabel: {
     fontSize: 15,
     fontWeight: '600',
@@ -795,7 +782,6 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-
   warningBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -803,17 +789,14 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 12,
   },
-
   warningIcon: {
     fontSize: 12,
     marginRight: 4,
   },
-
   warningText: {
     fontSize: 12,
     fontWeight: '600',
   },
-
   speedValue: {
     fontSize: 72,
     fontWeight: '800',
@@ -821,7 +804,6 @@ const styles = StyleSheet.create({
     letterSpacing: -2,
     marginBottom: 4,
   },
-
   speedUnit: {
     fontSize: 18,
     color: '#8E8E93',
@@ -829,19 +811,16 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     fontWeight: '500',
   },
-
   speedBarContainer: {
     height: 4,
     backgroundColor: '#E5E5EA',
     borderRadius: 2,
     overflow: 'hidden',
   },
-
   speedBar: {
     height: '100%',
     borderRadius: 2,
   },
-
   infoCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -854,42 +833,35 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 2,
   },
-
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
   },
-
   infoIcon: {
     fontSize: 24,
     marginRight: 12,
     width: 32,
   },
-
   infoContent: {
     flex: 1,
   },
-
   infoLabel: {
     fontSize: 13,
     color: '#8E8E93',
     fontWeight: '500',
     marginBottom: 2,
   },
-
   infoValue: {
     fontSize: 15,
     color: '#1C1C1E',
     fontWeight: '600',
   },
-
   divider: {
     height: 1,
     backgroundColor: '#E5E5EA',
     marginVertical: 8,
   },
-
   sosButton: {
     marginHorizontal: 16,
     marginVertical: 8,
@@ -902,7 +874,6 @@ const styles = StyleSheet.create({
     elevation: 8,
     backgroundColor: '#FF3B30',
   },
-
   sosText: {
     color: '#FFFFFF',
     fontSize: 56,
@@ -911,7 +882,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingTop: 32,
   },
-
   sosTimerRing: {
     backgroundColor: 'rgba(255,255,255,0.2)',
     paddingHorizontal: 12,
@@ -921,14 +891,12 @@ const styles = StyleSheet.create({
     marginBottom: 28,
     marginTop: 8,
   },
-
   sosSub: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
     letterSpacing: 1,
   },
-
   toggleCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -944,34 +912,28 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 2,
   },
-
   toggleLeft: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-
   toggleIcon: {
     fontSize: 28,
     marginRight: 12,
   },
-
   toggleTitle: {
     fontSize: 17,
     fontWeight: '600',
     color: '#1C1C1E',
     marginBottom: 2,
   },
-
   toggleSubtitle: {
     fontSize: 13,
     color: '#8E8E93',
   },
-
   advertiseContainer: {
     marginHorizontal: 16,
-    marginTop: 16,
+    marginTop: 8,
   },
-
   advertiseButton: {
     backgroundColor: '#5856D6',
     paddingVertical: 14,
@@ -979,26 +941,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
   },
-
   advertiseButtonActive: {
     backgroundColor: '#FF3B30',
   },
-
   advertiseButtonText: {
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 16,
+    marginLeft: 8,
   },
-
   advertiseNote: {
     textAlign: 'center',
     color: '#34C759',
     fontSize: 12,
     marginTop: 8,
   },
-
   infoNote: {
     backgroundColor: '#FFE5E5',
     borderRadius: 12,
@@ -1007,14 +965,12 @@ const styles = StyleSheet.create({
     marginVertical: 8,
     marginBottom: 24,
   },
-
   infoNoteText: {
     color: '#FF3B30',
     fontSize: 13,
     fontWeight: '500',
     textAlign: 'center',
   },
-
   receiverButton: {
     backgroundColor: '#007AFF',
     paddingVertical: 14,
@@ -1030,18 +986,15 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-
   receiverText: {
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 16,
   },
-
   modalContainer: {
     flex: 1,
     backgroundColor: '#F2F2F7',
   },
-
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1052,13 +1005,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5EA',
   },
-
   modalTitle: {
     fontSize: 28,
     fontWeight: '800',
     color: '#FF3B30',
   },
-
   modalClose: {
     width: 32,
     height: 32,
@@ -1067,12 +1018,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-
   modalCloseText: {
     fontSize: 20,
     color: '#8E8E93',
   },
-
   modalSubtitle: {
     fontSize: 20,
     fontWeight: '600',
@@ -1081,7 +1030,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     marginHorizontal: 20,
   },
-
   input: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
@@ -1092,12 +1040,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E5EA',
   },
-
   textArea: {
     height: 120,
     textAlignVertical: 'top',
   },
-
   mediaLabel: {
     fontSize: 15,
     fontWeight: '600',
@@ -1106,14 +1052,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     marginHorizontal: 20,
   },
-
   imageButtonsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginHorizontal: 20,
     marginBottom: 16,
   },
-
   imageButton: {
     flex: 1,
     paddingVertical: 14,
@@ -1121,33 +1065,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginHorizontal: 6,
   },
-
   galleryBtn: {
     backgroundColor: '#007AFF',
   },
-
   cameraBtn: {
     backgroundColor: '#5856D6',
   },
-
   imageButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
-
   imagePreview: {
     alignItems: 'center',
     marginVertical: 16,
     position: 'relative',
   },
-
   thumbnail: {
     width: 150,
     height: 150,
     borderRadius: 12,
   },
-
   removeImage: {
     position: 'absolute',
     top: -8,
@@ -1164,24 +1102,20 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-
   removeImageText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
   },
-
   loadingContainer: {
     alignItems: 'center',
     marginVertical: 24,
   },
-
   loadingText: {
     marginTop: 12,
     color: '#8E8E93',
     fontSize: 14,
   },
-
   submitBtn: {
     backgroundColor: '#FF3B30',
     borderRadius: 14,
@@ -1195,25 +1129,21 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
-
   submitText: {
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 4,
   },
-
   submitSubtext: {
     color: 'rgba(255,255,255,0.8)',
     fontSize: 12,
   },
-
   cancelBtn: {
     padding: 16,
     alignItems: 'center',
     marginBottom: 20,
   },
-
   cancelText: {
     color: '#007AFF',
     fontSize: 16,
